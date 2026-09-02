@@ -72,7 +72,7 @@ The extension discovery probe is non-destructive: it saves one word from each ca
 
 ## Test modules
 
-![Main Menu](images/menu.jpg)
+![Main Menu](../images/menu.jpg)
 
 ### CPU and on-chip RAM
 
@@ -82,7 +82,7 @@ The extension discovery probe is non-destructive: it saves one word from each ca
 - forward/reverse ROM-wide additive checksums and fixed build marker;
 - ROM address/bus sanity through fixed sentinels and checksum disagreement.
 
-![Diagnostic BIOS Boot Screen](images/boot.jpg)
+![Diagnostic BIOS Boot Screen](../images/boot.jpg)
 
 ### VDP and VRAM
 
@@ -99,29 +99,29 @@ The extension discovery probe is non-destructive: it saves one word from each ca
 
 - VDP:
 
-![Screen VRAM Test](images/screenvram.jpg)
-![Screen VRAM Result](images/screenresult.jpg)
+![Screen VRAM Test](../images/screenvram.jpg)
+![Screen VRAM Result](../images/screenresult.jpg)
 
 - Modes:
 
-![TMS9918 Sprite Test](images/tms9918.jpg)
-![TMS9918 Text Mode Test](images/tms99182.jpg)
-![TMS9918 Multicolor Test](images/tms99183.jpg)
-![TMS9918 MegaDemo Test](images/tms99184.jpg)
-![TMS9918 Results](images/tms99185.jpg)
+![TMS9918 Sprite Test](../images/tms9918.jpg)
+![TMS9918 Text Mode Test](../images/tms99182.jpg)
+![TMS9918 Multicolor Test](../images/tms99183.jpg)
+![TMS9918 MegaDemo Test](../images/tms99184.jpg)
+![TMS9918 Results](../images/tms99185.jpg)
 
 - MarchB:
 
-![TMS9918 MarchB Menu](images/vram.jpg)
-![TMS9918 MarchB Start](images/marchb.jpg)
-![TMS9918 MarchB In Progress](images/marchb2.jpg)
-![TMS9918 MarchB Done](images/marchb3.jpg)
+![TMS9918 MarchB Menu](../images/vram.jpg)
+![TMS9918 MarchB Start](../images/marchb.jpg)
+![TMS9918 MarchB In Progress](../images/marchb2.jpg)
+![TMS9918 MarchB Done](../images/marchb3.jpg)
 
 ### VRAM physical-lane interpretation
 
 For the supplied mid-production TP1000 schematic (serial cited by the source as ZTST 038881), software bits map in order to VDP `RD0..RD7`, and the eight 4116 positions are drawn left-to-right as `D1, D2, C1, C2, B1, B2, A1, A2`. This is a board-revision-specific lookup, not a universal part-location claim. A failing bit identifies the complete data path for that lane; the DRAM itself, socket, trace, VDP pin, or support logic may be responsible.
 
-![VDP RAM Identification](images/vramic.jpg)
+![VDP RAM Identification](../images/vramic.jpg)
 
 ### Human-interactive I/O
 
@@ -132,7 +132,7 @@ For the supplied mid-production TP1000 schematic (serial cited by the source as 
 - color, text, border, sprite, and motion pages;
 - long-running timing/counter page and repeated memory passes.
 
-![MegaDemo Still](images/tms99184.jpg)
+![MegaDemo Still](../images/tms99184.jpg)
 
 ### Optional expansion
 
@@ -143,8 +143,8 @@ No extension is assumed on a stock machine. Discovery must fail closed and leave
 - report ESE separately only when a reliable signature/decode test is proved; the current ROM must not equate "Tanam present" with "ESE present";
 - expose a destructive 17N test only after detection, a warning page, and a second `7` confirmation; test all words in both windows and leave the final March state at zero.
 
-![Tanam Screen](tanamtest.jpg)
-![Tanam Memory Test Result](tanamtest2.jpg)
+![Tanam Screen](../images/tanamtest.jpg)
+![Tanam Memory Test Result](../images/tanamtest2.jpg)
 
 ## Memory map shown by the diagnostic
 
