@@ -3,6 +3,11 @@
 
 This repository builds a cold-start diagnostic ROM for an American Tomy Tutor or an original Japanese Tomy Pyuuta. The v1.0 ROM is designed for either a **direct internal BIOS replacement** or an **external BIOS replacement** through hardware such as Tanam's ESE or a future Hexbus diagnostic cartridge in the rear expansion slot. The ROM itself does not call the stock BIOS, use external CPU RAM, or trust VRAM before testing it.
 
+![Diagnostic BIOS Menu][images/menu.jpg]
+![Diagnostic BIOS Boot Screen][images/boot.jpg]
+![Diagnostic BIOS Credits][images/credits.jpg]
+
+
 > **HARDWARE CAUTION.** v1.0 performs destructive memory tests. It has been exercised on physical hardware, but electrical and cross-revision qualification remains incomplete. Archive the original ROM and verify device pinout, supply, orientation, and output-disable behavior before installation.
 
 ## What the current prototype implements
