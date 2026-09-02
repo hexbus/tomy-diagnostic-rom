@@ -5,16 +5,17 @@ Status: implementation baseline, 2026-08-31. Evidence labels are **confirmed**, 
 
 ## Scope and deployment order
 
-The first implementation is a direct internal BIOS replacement. It is a raw 16 KiB image mapped at CPU `>0000->3FFF`; it contains the TMS9995 reset vectors at `>0000`, uses only TMS9995 on-chip RAM for CPU state, and does not depend on the stock BIOS, a cartridge, ESE, Tanam, cassette, or working VRAM.
+The diagnostic is a raw 16 KiB BIOS image mapped at CPU `>0000->3FFF`; it contains the TMS9995 reset vectors at `>0000`, uses only TMS9995 on-chip RAM for CPU state, and does not depend on routines in the stock BIOS, external CPU RAM, cassette, or working VRAM.
 
 The physical stock system-ROM decode spans `>0000->7FFF` and the documented mid-production TP1000 board uses a 28-pin 256-Kbit ROM. A 16 KiB diagnostic therefore needs either a socket adapter/EPROM whose unused upper address input is strapped correctly, or a programmer image in which the 16 KiB core is repeated so every selected physical quarter is identical. The build emits both forms.
 
-A rear-port boot cartridge is a later deployment. It must not change the direct-replacement core. Two possible handoffs are being kept separate:
+There are exactly three intended ways to place this diagnostic BIOS in the system address space:
 
-1. The stock BIOS reportedly recognizes an alternate cartridge boot ROM through mapper/signature behavior at `>E110` and `>E100`, then enters a vector at cartridge `>0000`.
-2. CPU `>FFFC->FFFF` is the TMS9995 on-chip NMI vector. It is not ordinary cartridge ROM and cannot simply be supplied by an EPROM on the rear connector.
+1. Direct replacement of the internal BIOS ROM. This is currently usable with the correct programmed device or adapter for the exact motherboard revision.
+2. External BIOS replacement through a Tanam ESE board. This is currently usable while the internal BIOS remains installed.
+3. The future Hexbus rear-slot diagnostic cartridge. This hardware is still under development and is neither released nor electrically qualified.
 
-The exact stock-ROM handoff and the requested `>FFFC` path must be proved from an instruction-level trace before a PCB depends on either one. `/KILL SROM`, `/EXM00`, `/MEMEN`, `/DBIN`, `/WE`, `READY`, `/RESET`, address, and data signals are present on the documented rear connector, so a hard override remains feasible with suitable decode logic and bus isolation.
+No compatibility is claimed for a bare rear-slot connection, an ordinary game cartridge, a generic EPROM adapter, or a speculative stock-BIOS handoff. CPU `>FFFC->FFFF` is the TMS9995 on-chip NMI vector, not ordinary rear-port ROM.
 
 ## Hardware facts that shape the firmware
 
@@ -134,24 +135,12 @@ No extension is assumed on a stock machine. Discovery must fail closed and leave
 
 ## Rear BIOS-override cartridge concept
 
-The safest first hardware prototype is a rear expansion card, not a front cartridge, because the rear connector exposes the complete address bus, data bus, `/MEMEN`, `/DBIN`, `/WE`, READY, `/RESET`, `/EXM00`, and `/KILL SROM`.
+This section documents planned hardware, not a v1.0 installation method. The Hexbus diagnostic cartridge is undeveloped, unreleased, and electrically unqualified. Its PCB, continuity records, BOM, and enclosure work belong in the companion [`tomy-diag-cartridge`](https://github.com/hexbus/tomy-diag-cartridge) repository.
 
-The enable jumper has two hard states sampled only while power is off:
+The current fixed-purpose concept is a rear expansion card because the documented connector appears to expose the address bus, data bus, `/MEMEN`, `/DBIN`, `/WE`, READY, `/RESET`, `/EXM00`, and `/KILL SROM`. The exact contacts and behavior remain subject to physical continuity and timing qualification on the target machine revision.
 
-- **NORMAL:** `/KILL SROM` released; diagnostic EPROM output disabled; stock machine owns `>0000->7FFF`.
-- **DIAG:** `/KILL SROM` asserted low; diagnostic decode enabled only for qualified reads in `>0000->7FFF`, where the 16 KiB core is mirrored; writes and all other ranges leave the EPROM tri-stated.
+The planned compact board has no pass-through connector and no NORMAL mode. Installing it is intended to assert `/KILL SROM` and select the diagnostic BIOS; stock operation requires removing it while power is off. A two-pole DIP switch selects one of four 16 KiB W27C512 banks, with `00` intended as the default diagnostic bank.
 
-The routed fixed-purpose revision-A board does not need an ESE-style GAL. It uses the console's `/EXM00` as the 16 KiB chip select and two gates of a 74HCT00 to form `/OE = /EXM00 OR NOT(DBIN)`. A W27C512 provides four mechanically selected 16 KiB banks, with 10 kohm pulldowns making switch `00` the default diagnostic bank. Because this no-pass-through board has no NORMAL mode, a 0-ohm link asserts `/KILL SROM` whenever the board is installed. The card must never drive data while DBIN is inactive or while the internal ROM remains enabled.
+The provisional logic does not require an ESE-style GAL. It proposes using `/EXM00` as the 16 KiB chip select and two gates of a 74HCT00 to form `/OE = /EXM00 OR NOT(DBIN)`. A 0-ohm link would assert `/KILL SROM` whenever the board is installed. These are design hypotheses, not released pin assignments or proven compatibility. The card must never drive data while DBIN is inactive or while the internal ROM remains enabled.
 
 Before a PCB is released, continuity-check contacts 38-48 against the exact machine revision, capture `/EXM00`, `/KILL SROM`, `/MEMEN`, `/DBIN`, and READY timing, and prove with a current-limited bench supply and logic analyzer that internal and external ROMs are never enabled together. The existing ESE GAL equations are relevant evidence but are not copied into this design.
-
-## Future no-removal boot path
-
-After the direct replacement is physically qualified, investigate a boot cartridge that leaves the internal BIOS installed:
-
-1. Trace the stock boot read of `>E110` and subsequent writes to `>E100` on Tutor and Pyuuta firmware revisions.
-2. Determine exactly when `/KILL SROM` changes and which external select maps cartridge bytes to CPU `>0000`.
-3. Trace any initialization of `>FFFC->FFFF` and any NMI used in the handoff.
-4. Build a passive signature-only cartridge first, then a one-instruction handoff ROM, before using the full diagnostic.
-
-This phase is intentionally not a dependency of the direct 16 KiB ROM.

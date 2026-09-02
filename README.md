@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Tutor / Pyuuta 16 KiB diagnostic BIOS
 
-This repository builds a cold-start diagnostic ROM for an American Tomy Tutor or an original Japanese Tomy Pyuuta. The v1.0 ROM is designed for either a **direct internal BIOS replacement** or an **external BIOS replacement** through hardware such as Tanam's ESE or a future Hexbus diagnostic cartridge in the rear expansion slot. The ROM itself does not call the stock BIOS, use external CPU RAM, or trust VRAM before testing it.  The goal is to also use this code in the TI-99/4A Console Tester.
+This repository builds a cold-start diagnostic ROM for an American Tomy Tutor or an original Japanese Tomy Pyuuta. The v1.0 ROM can currently be used only by **directly replacing the internal BIOS ROM** or by loading it through a **Tanam ESE board**. A third method, the Hexbus rear-slot diagnostic cartridge, is under development and is not yet released or qualified. No bare rear-slot connection, ordinary game cartridge, or unspecified external adapter is claimed to work. The ROM itself does not call the stock BIOS, use external CPU RAM, or trust VRAM before testing it. The goal is to also use this code in the TI-99/4A Console Tester.
 
 ![Diagnostic BIOS Menu](images/menu.jpg)
 ![Diagnostic BIOS Boot Screen](images/boot.jpg)
@@ -25,7 +25,7 @@ This repository builds a cold-start diagnostic ROM for an American Tomy Tutor or
 | Input | separate keyboard and controller pages; native shifted chords and replacement-PCB contacts are decoded; both Shift switches share R6B2 by design; controller ports are read directly at their physical `>EC40`/`>EC50` matrix rows |
 | Expansion | non-destructive discovery of independent `>6000` and `>C000` windows; confirmed destructive one-pass or continuous 17N March-B over all 16 KiB when detected |
 | Regions | separate Tutor and Pyuuta builds from one engine; the correct physical legend is selected before programming |
-| Deployment | direct internal ROM replacement, Tanam ESE external override, or a qualified rear-slot diagnostic cartridge |
+| Deployment | currently: direct internal BIOS replacement or Tanam ESE; future: unreleased Hexbus rear-slot diagnostic cartridge |
 
 The `Hexbus Tutor/Pyuuta` menu displays `github.com/hexbus`, `RELEASE v1.0 - USE WITH CARE`, region, detected expansion, and eight choices. Pressing a menu number immediately bolds only that numeral, sounds a short TI-style acknowledgement beep, and pauses briefly before opening the selection. Automatic startup results are kept on the dedicated System Information page rather than repeated on the menu:
 
@@ -38,9 +38,9 @@ The `Hexbus Tutor/Pyuuta` menu displays `github.com/hexbus`, `RELEASE v1.0 - USE
 7. Optional destructive Tanam External Board Test covering both independent 8 KiB windows.
 8. Credits and Thanks for the people and AtariAge community who contributed knowledge, testing, and prior work.
 
-The first physical keyboard report is unusually diagnostic: `Q`, `E`, `T`, `9`, `O`, the PC-keycap `=`/`+` position over the native degree/Yen contact, Shift, and Down are respectively `R0B2` through `R7B2`. A complete one-contact-per-row failure on bit 2 points toward their shared matrix/input path rather than eight coincidentally worn switches. The replacement PCB confirms that its two Shift switches intentionally share R6B2 and that its PC legends do not electronically remap the native contacts. See the [keyboard matrix notes](docs/KEYBOARD-CONTROLLER-MATRIX.md) and [first-boot findings](docs/FIRST-PHYSICAL-BOOT.md).
+The first physical keyboard report is unusually diagnostic: `Q`, `E`, `T`, `9`, `O`, the PC-keycap `=`/`+` position over the native degree/Yen contact, Shift, and Down are respectively `R0B2` through `R7B2`. A complete one-contact-per-row failure on bit 2 points toward their shared matrix/input path rather than eight coincidentally worn switches. The replacement PCB confirms that its two Shift switches intentionally share R6B2 and that its PC legends do not electronically remap the native contacts. See the [keyboard matrix notes](docs/KEYBOARD-CONTROLLER-MATRIX.md).
 
-Not yet claimed: complete cross-revision physical qualification, a verified Japanese keycap-to-kana overlay, TMS9995 decrementer calibration, a distinct positive ESE identity probe, or exhaustive validation of every undocumented VDP combination.
+Not yet claimed: complete cross-revision physical qualification, a verified Japanese keycap-to-kana overlay, TMS9995 decrementer calibration, a distinct positive ESE identity probe, a released or electrically qualified Hexbus rear-slot cartridge, or exhaustive validation of every undocumented VDP combination.
 
 ## Choose the image
 
@@ -79,11 +79,11 @@ These v1.0 binaries contain a compact high-energy PSG loop captured around MegaD
 
 ## Safety and deployment order
 
-1. Read and archive the original system ROM before removal.
-2. Follow the [physical checklist](docs/PHYSICAL-TEST-CHECKLIST.md).
-3. Qualify the direct internal replacement first.
-4. Treat any external ROM adapter as separate, electrically unqualified hardware. The companion design lives in the `tomy-diag-cartridge` repository.
-5. Keep the future stock-BIOS handoff separate. CPU `>FFFC` is on-chip NMI-vector storage, not ordinary rear-port ROM.
+1. Choose one of the two currently usable methods: direct internal BIOS replacement or a Tanam ESE board.
+2. Follow the corresponding path in the [physical checklist](docs/PHYSICAL-TEST-CHECKLIST.md).
+3. For direct replacement, read and archive the original system ROM before removing it.
+4. For ESE use, follow the ESE hardware instructions and keep the internal BIOS installed.
+5. Do not treat the future Hexbus rear-slot cartridge as an available installation method. Its hardware work and eventual qualification belong in the companion [`tomy-diag-cartridge`](https://github.com/hexbus/tomy-diag-cartridge) repository.
 
 ## Documentation
 
