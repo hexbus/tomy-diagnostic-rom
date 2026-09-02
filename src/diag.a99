@@ -1,0 +1,3784 @@
+* SPDX-License-Identifier: Apache-2.0
+* Tutor/Pyuuta cold-start diagnostic BIOS.
+*
+* This file is included by one regional wrapper. It uses no stack, no stock
+* BIOS service, and no external CPU RAM. The direct-replacement image owns
+* on-chip RAM and VRAM, so both are tested destructively.
+
+VDPDAT equ  >e000
+VDPCTL equ  >e002
+SNDOUT equ  >e200
+
+RESFLG equ  >f000                 * cumulative result bits
+STAGE  equ  >f002
+FAILAD equ  >f004
+FAILXP equ  >f006
+FAILAC equ  >f008
+FAILMS equ  >f00a
+EXTFLG equ  >f00c                 * bit 0: independent Tanam windows
+TIMFLG equ  >f00e                 * bit 0: VBlank status transition seen
+ROMSUM equ  >f010                 * measured 16 KiB diagnostic-ROM word sum
+SOAKCT equ  >f012                 * completed sustained VRAM March passes
+KEYHELD equ >f014                 * decoded index+1 while a key is held
+KEYCNT equ  >f016                 * distinct key-press count
+ROMSM2 equ  >f018                 * reverse-order diagnostic-ROM word sum
+VDPSTA equ  >f01a                 * accumulated collision/fifth-sprite status
+BURNCT equ  >f01c                 * operator-selected deep-test passes
+MENURT equ  >f01e                 * trusted return slot for long menu actions
+KEYBUF equ  >f020                 * eight words, one CRU row each
+HOLDCT equ  >f030                 * VBlank count for deliberate keyboard exit
+JOYBUF equ  >f032                 * selected controller 1/2 raw words
+KEYMODE equ >f036                 * zero=native labels, one=PC replacement caps
+WFRAME equ  >f038                 * MegaDemo wave frame counter, modulo 1024
+WPHASE equ  >f03a                 * MegaDemo signed raster phase accumulator
+VDPDLY equ  >f074
+ABORTF equ  >f076                 * nonzero when operator presses 0 in a long test
+RUNMOD equ  >f078                 * zero=one pass, one=continuous
+POLSAV equ  >f07a                 * R12 save for lightweight 0-key polling
+TSTPHS equ  >f07c                 * current destructive-test phase (0..4)
+SUBRET equ  >f07e                 * return slot for an input-lab child page
+SCRADR equ  >f070                 * visible-scrub current VRAM block address
+SCRNUM equ  >f072                 * visible-scrub completed 256-byte blocks
+ALTWSP equ  >f080
+WRKSP  equ  >f0a0
+
+FCPU   equ  >0001
+FRAM   equ  >0002
+FROM   equ  >0004
+FVDP   equ  >0008
+FTIME  equ  >0010
+FEXT   equ  >0020
+
+NTBASE equ  >0000
+SABASE equ  >0300
+CTBASE equ  >0380
+PTBASE equ  >0800
+SPBASE equ  >1800
+
+       aorg >0000
+       data WRKSP,START
+       data WRKSP,START
+       data WRKSP,START
+       data WRKSP,FAULT
+       data WRKSP,FAULT
+       data WRKSP,FAULT
+       data WRKSP,FAULT
+       data WRKSP,FAULT
+
+       aorg >0100
+START  limi 0
+       lwpi WRKSP
+       bl   @PSGMUT
+       bl   @BOOTBP
+
+* Test every ordinary on-chip RAM word by moving the active workspace into a
+* block already tested by the first phase. No external RAM or stack is used.
+       li   r1,>f000
+       li   r2,>0050              * >F000->F09F, includes alternate workspace
+       bl   @RAMRNG
+       li   r1,>f0c0
+       li   r2,>001e              * >F0C0->F0FB
+       bl   @RAMRNG
+       lwpi ALTWSP
+       li   r1,>f0a0
+       li   r2,>0010              * original reset workspace
+       bl   @RAMRNG
+       lwpi WRKSP
+       clr  r0
+       clr  r1
+       clr  r2
+       clr  r3
+       clr  r4
+       clr  r5
+       clr  r6
+       clr  r7
+       clr  r8
+       clr  r9
+       clr  r10
+       clr  r11
+       clr  r12
+       clr  r13
+       clr  r14
+       clr  r15
+       clr  @RESFLG
+       clr  @EXTFLG
+       clr  @TIMFLG
+       clr  @VDPDLY
+       clr  @ROMSUM
+       clr  @SOAKCT
+       clr  @KEYHELD
+       clr  @KEYCNT
+       clr  @ROMSM2
+       clr  @VDPSTA
+       clr  @BURNCT
+       clr  @SCRADR
+       clr  @SCRNUM
+       clr  @ABORTF
+       clr  @RUNMOD
+       clr  @TSTPHS
+       clr  @HOLDCT
+       clr  @JOYBUF
+       clr  @JOYBUF+2
+       clr  @KEYMODE
+       clr  @WFRAME
+       clr  @WPHASE
+
+       li   r0,>0002
+       mov  r0,@STAGE
+       bl   @CPUTST
+       bl   @ROMTST
+
+       li   r0,>0003
+       mov  r0,@STAGE
+       bl   @VDPINI
+       bl   @VRTEST
+       bl   @EXTPRB
+       bl   @SCRINI
+       bl   @TIMTST
+       bl   @SUMMARY
+       bl   @PSGTST
+       mov  @RESFLG,r0
+       jne  BOOTFL
+       bl   @PASSBP
+       jmp  MENUEN
+BOOTFL bl   @FAILBP
+       jmp  MENUEN
+
+* ---------------------------------------------------------------------------
+* Stable operator menu. Number keys avoid the reported shared bit-2 path.
+* ---------------------------------------------------------------------------
+
+MENUEN bl   @SCRINI
+       bl   @MENUDR
+       bl   @KEYREL
+MENULP bl   @KEYSCN
+       mov  @KEYBUF,r0
+       andi r0,>0100              * 1: system results
+       jne  MENU1
+       mov  @KEYBUF,r0
+       andi r0,>0200              * 2: keyboard/controllers
+       jne  MENU2
+       mov  @KEYBUF+2,r0
+       andi r0,>0100              * 3: VRAM deep test
+       jne  MENU3
+       mov  @KEYBUF+2,r0
+       andi r0,>0200              * 4: VDP showcase
+       jne  MENU4
+       mov  @KEYBUF+4,r0
+       andi r0,>0100              * 5: PSG music
+       jne  MENU5
+       mov  @KEYBUF+4,r0
+       andi r0,>0200              * 6: VRAM chip finder
+       jne  MENU6
+       mov  @KEYBUF+6,r0
+       andi r0,>0100              * 7: optional Tanam 16 KiB RAM test
+       jne  MENU7
+       mov  @KEYBUF+6,r0
+       andi r0,>0200              * 8: credits and acknowledgements
+       jne  MENU8
+       jmp  MENULP
+
+MENU1  li   r0,>0102
+       li   r1,>1600
+       bl   @MENUACK
+       bl   @KEYREL
+       bl   @SCRINI
+       bl   @SUMMARY
+       bl   @WAIT0
+       jmp  MENUEN
+MENU2  li   r0,>0142
+       li   r1,>1700
+       bl   @MENUACK
+       bl   @KEYREL
+       bl   @INPLAB
+       jmp  MENUEN
+MENU3  li   r0,>0182
+       li   r1,>1800
+       bl   @MENUACK
+       bl   @KEYREL
+       bl   @VRDEEP
+       jmp  MENUEN
+MENU4  li   r0,>01c2
+       li   r1,>1900
+       bl   @MENUACK
+       bl   @KEYREL
+       bl   @VDPSHW
+       jmp  MENUEN
+MENU5  li   r0,>0202
+       li   r1,>1a00
+       bl   @MENUACK
+       bl   @KEYREL
+       bl   @MUSPG
+       bl   @PSGMUS
+       jmp  MENUEN
+MENU6  li   r0,>0242
+       li   r1,>1b00
+       bl   @MENUACK
+       bl   @KEYREL
+       bl   @VRCHIP
+       bl   @WAIT0
+       jmp  MENUEN
+MENU7  li   r0,>0282
+       li   r1,>1c00
+       bl   @MENUACK
+       bl   @KEYREL
+       bl   @TANRAM
+       b    @MENUEN
+MENU8  li   r0,>02c2
+       li   r1,>1d00
+       bl   @MENUACK
+       bl   @KEYREL
+       bl   @CREDPG
+       b    @MENUEN
+
+* Immediate menu acknowledgement: replace only the selected numeral with its
+* private bold glyph, play a short TI-style key beep, hold for four frames,
+* then mute. KEYREL below leaves the bold numeral visible while a key is held.
+MENUACK mov  r11,r10
+       bl   @VRW1
+       li   r0,>8800
+       movb r0,@SNDOUT
+       inc  @VDPDLY
+       li   r0,>0800
+       movb r0,@SNDOUT
+       inc  @VDPDLY
+       li   r0,>9200
+       movb r0,@SNDOUT
+       inc  @VDPDLY
+       li   r5,4
+MENUAVL bl   @VDPVB
+       dec  r5
+       jne  MENUAVL
+       bl   @PSGMUT
+       b    *r10
+
+CREDPG mov  r11,r12
+       bl   @SCRINI
+       li   r1,CREDTT
+       bl   @PUTTTL
+       li   r4,CREDTB
+       li   r5,7
+CREDLP mov  *r4+,r0
+       mov  *r4+,r1
+       bl   @PUTSTR
+       dec  r5
+       jne  CREDLP
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+       bl   @WAIT0
+       b    *r12
+
+* Wait until every input is released. This keeps a menu press from repeating.
+KEYREL mov  r11,r13
+KEYRLP bl   @KEYSCN
+       li   r1,KEYBUF
+       li   r2,8
+       clr  r0
+KEYROR soc  *r1+,r0
+       dec  r2
+       jne  KEYROR
+       mov  r0,r0
+       jne  KEYRLP
+       b    *r13
+
+* Wait for the PC/Tutor/Pyuuta 0 contact (row 4, bit 0), then release it.
+WAIT0  mov  r11,r15
+WAIT0L bl   @KEYSCN
+       mov  @KEYBUF+8,r0
+       andi r0,>0100
+       jeq  WAIT0L
+       bl   @KEYREL
+       b    *r15
+
+* Lightweight row-4/bit-0 poll for long-running tests and music. Unlike a full
+* matrix scan it preserves every loop register except R0/R1 and sets ABORTF.
+POLL0  mov  r11,r15
+       mov  r12,@POLSAV
+       li   r12,>ec40
+       clr  r0
+       stcr r0,8
+       mov  @POLSAV,r12
+       andi r0,>0100
+       jeq  POLLRT
+       li   r1,1
+       mov  r1,@ABORTF
+POLLRT b    *r15
+
+* ---------------------------------------------------------------------------
+* Early CPU/on-chip RAM tests
+* ---------------------------------------------------------------------------
+
+* R1=start, R2=word count. Address-dependent data plus four fixed patterns
+* catch data, cell, and common alias faults before the range is trusted.
+RAMRNG mov  r11,r10
+       mov  r1,r4
+       mov  r2,r5
+       li   r6,>a55a
+RAMADW mov  r1,r7
+       xor  r6,r7
+       mov  r7,*r1+
+       dec  r2
+       jne  RAMADW
+       mov  r4,r1
+       mov  r5,r2
+RAMADR mov  r1,r7
+       xor  r6,r7
+       c    *r1,r7
+       jne  RAMBAD
+       inct r1
+       dec  r2
+       jne  RAMADR
+       clr  r8
+RAMPAT mov  r4,r1
+       mov  r5,r2
+       mov  @RPATS(r8),r6
+RAMPW  mov  r6,*r1+
+       dec  r2
+       jne  RAMPW
+       mov  r4,r1
+       mov  r5,r2
+RAMPR  c    *r1,r6
+       jne  RAMBAD
+       inct r1
+       dec  r2
+       jne  RAMPR
+       inct r8
+       ci   r8,8
+       jne  RAMPAT
+       b    *r10
+RAMBAD mov  r1,r0
+       li   r1,FRAM
+       jmp  EARLYF
+
+RPATS  data >0000,>ffff,>aaaa,>5555
+
+CPUTST li   r0,>1234
+       ai   r0,>1111
+       ci   r0,>2345
+       jne  CPUBAD
+       mov  r0,r1
+       xor  @CPUXOR,r1
+       ci   r1,>d3ba
+       jne  CPUBAD
+       sla  r0,1
+       ci   r0,>468a
+       jne  CPUBAD
+       inv  r0
+       ci   r0,>b975
+       jne  CPUBAD
+       rt
+CPUBAD mov  r0,@FAILAC
+       li   r1,FCPU
+       soc  r1,@RESFLG
+       rt
+CPUXOR data >f0ff
+
+* The build patches >3FFC so the unsigned sum of all 8192 big-endian words is
+* zero. Read it in both directions: a stable equal nonzero pair points to the
+* wrong image/bank, while unequal readings point toward an unstable ROM path.
+ROMTST clr  r0
+       clr  r1
+       li   r2,>2000
+ROMTSL a    *r1+,r0
+       dec  r2
+       jne  ROMTSL
+       mov  r0,@ROMSUM
+       clr  r3
+       li   r1,>3ffe
+       li   r2,>2000
+ROMTSR a    *r1,r3
+       dect r1
+       dec  r2
+       jne  ROMTSR
+       mov  r3,@ROMSM2
+       mov  r0,r2
+       soc  r3,r2
+       jne  ROMBAD
+       c    r0,r3
+       jeq  ROMTOK
+ROMBAD
+       li   r1,FROM
+       soc  r1,@RESFLG
+ROMTOK rt
+
+* R0=failing address, R1=stage flag. The active workspace is the only writable
+* resource assumed. Border and PSG attempts are deliberately redundant.
+EARLYF mov  r0,@FAILAD
+       mov  r1,@RESFLG
+       mov  r1,@STAGE
+FAULT movb @VDPCTL,r0            * reset an unknown VDP control latch state
+       li   r0,>f687              * red border if the VDP control path works
+       bl   @VDPREGW
+       bl   @FAILBP
+       jmp  FAULT
+
+* ---------------------------------------------------------------------------
+* VDP/VRAM tests
+* ---------------------------------------------------------------------------
+
+VDPINI movb @VDPCTL,r0
+       li   r1,VDPREG
+       li   r2,16
+VDPILP movb *r1+,@VDPCTL
+       inc  @VDPDLY
+       dec  r2
+       jne  VDPILP
+       rt
+
+VRTEST mov  r11,r13
+       clr  @FAILAD
+       clr  @FAILXP
+       clr  @FAILAC
+       clr  @FAILMS
+
+* Data path at address zero: fixed and walking patterns.
+       li   r4,VRPATS
+       li   r5,20
+VRDTLP clr  r0
+       clr  r1
+       movb *r4+,r1
+       bl   @VRW1
+       clr  r0
+       bl   @VRR1
+       cb   r1,r2
+       jeq  VRDTOK
+       b    @VRBAD
+VRDTOK
+       dec  r5
+       jne  VRDTLP
+
+* Address path: clear all VRAM, write distinct sentinels to 1<<A0..A13, then
+* verify them. Aliased address lines overwrite a different expected marker.
+       clr  r1
+       bl   @VRFILL
+       li   r6,1
+       li   r7,>0100
+       li   r8,14
+VRAWW  mov  r6,r0
+       mov  r7,r1
+       bl   @VRW1
+       sla  r6,1
+       ai   r7,>0100
+       dec  r8
+       jne  VRAWW
+       clr  r0
+       bl   @VRR1
+       mov  r2,r2
+       jeq  VRAZOK
+       b    @VRBAD0
+VRAZOK
+       li   r6,1
+       li   r7,>0100
+       li   r8,14
+VRAWR  mov  r6,r0
+       bl   @VRR1
+       cb   r7,r2
+       jeq  VRAAOK
+       b    @VRBADA
+VRAAOK
+       sla  r6,1
+       ai   r7,>0100
+       dec  r8
+       jne  VRAWR
+
+* Full 16 KiB sweeps exercise every cell and every data lane.
+       li   r4,VFPATS
+       li   r5,4
+VRFPLP clr  r1
+       movb *r4+,r1
+       bl   @VRFILL
+       bl   @VRVER
+       dec  r5
+       jne  VRFPLP
+       b    *r13
+
+* Destructive 17N March-B, chosen after review of DesTestMAX's documented
+* strategy: {w0; up(r0,w1,r1,w0,r0,w1); up(r1,w0,w1);
+* down(r1,w0,w1,w0); down(r0,w1,w0)}. VRAM has no decrement mode,
+* so every operation explicitly sets the address. The live display is never
+* blanked: VRAM contents themselves become the visible test pattern.
+VRMARCH mov  r11,r13
+       clr  @TSTPHS
+       li   r0,>4487              * M0: blue border, initialize 0
+       bl   @VDPREGW
+       clr  r1
+       bl   @VRFILL
+
+* M1 ascending: r0,w1,r1,w0,r0,w1.
+       li   r0,>4787              * cyan border
+       bl   @VDPREGW
+       li   r0,1
+       mov  r0,@TSTPHS
+       clr  r4
+       li   r5,>4000
+       li   r7,>0100
+VRMB1  mov  r4,r0
+       bl   @VRR1
+       mov  r2,r2
+       jeq  VRM1A
+       b    @VRMBZ
+VRM1A
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       mov  r4,r0
+       bl   @VRR1
+       li   r6,>ff00
+       cb   r6,r2
+       jeq  VRM1B
+       b    @VRMBAD
+VRM1B
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       mov  r4,r0
+       bl   @VRR1
+       mov  r2,r2
+       jeq  VRM1C
+       b    @VRMBZ
+VRM1C
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       inc  r4
+       dec  r5
+       jeq  VRMB1D
+       dec  r7
+       jne  VRMB1
+       bl   @POLL0
+       mov  r0,r0
+       jeq  VRM1D
+       b    @VRMAB
+VRM1D
+       li   r7,>0100
+       jmp  VRMB1
+VRMB1D
+
+* M2 ascending: r1,w0,w1.
+       li   r0,>4587              * light-blue border
+       bl   @VDPREGW
+       li   r0,2
+       mov  r0,@TSTPHS
+       clr  r4
+       li   r5,>4000
+       li   r7,>0100
+VRMB2  mov  r4,r0
+       bl   @VRR1
+       li   r6,>ff00
+       cb   r6,r2
+       jne  VRMBAD
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       inc  r4
+       dec  r5
+       jeq  VRMB2D
+       dec  r7
+       jne  VRMB2
+       bl   @POLL0
+       mov  r0,r0
+       jne  VRMAB
+       li   r7,>0100
+       jmp  VRMB2
+VRMB2D
+
+* M3 descending: r1,w0,w1,w0.
+       li   r0,>4a87              * amber border
+       bl   @VDPREGW
+       li   r0,3
+       mov  r0,@TSTPHS
+       li   r4,>3fff
+       li   r5,>4000
+       li   r7,>0100
+VRMB3  mov  r4,r0
+       bl   @VRR1
+       li   r6,>ff00
+       cb   r6,r2
+       jne  VRMBAD
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       dec  r4
+       dec  r5
+       jeq  VRMB3D
+       dec  r7
+       jne  VRMB3
+       bl   @POLL0
+       mov  r0,r0
+       jne  VRMAB
+       li   r7,>0100
+       jmp  VRMB3
+VRMB3D
+
+* M4 descending: r0,w1,w0.
+       li   r0,>4c87              * dark-green border
+       bl   @VDPREGW
+       li   r0,4
+       mov  r0,@TSTPHS
+       li   r4,>3fff
+       li   r5,>4000
+       li   r7,>0100
+VRMB4  mov  r4,r0
+       bl   @VRR1
+       mov  r2,r2
+       jne  VRMBZ
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       dec  r4
+       dec  r5
+       jeq  VRMB4D
+       dec  r7
+       jne  VRMB4
+       bl   @POLL0
+       mov  r0,r0
+       jne  VRMAB
+       li   r7,>0100
+       jmp  VRMB4
+VRMB4D
+       li   r0,5
+       mov  r0,@TSTPHS
+       li   r0,>4287              * green border: pass
+       bl   @VDPREGW
+       b    *r13
+VRMAB  b    *r13
+VRMBZ  clr  r6
+VRMBAD mov  r6,r1
+       mov  r4,r0
+       b    @VRBAD
+
+* Local March-B over one 256-byte block at R8. Used only by the visible scrub.
+VRBLK  mov  r11,r13
+       mov  r8,r4
+       li   r5,>0100
+VRB0   mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       inc  r4
+       dec  r5
+       jne  VRB0
+
+       mov  r8,r4
+       li   r5,>0100
+VRB1   mov  r4,r0
+       bl   @VRR1
+       clr  r6
+       cb   r6,r2
+       jne  VRBBAD
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       mov  r4,r0
+       bl   @VRR1
+       li   r6,>ff00
+       cb   r6,r2
+       jne  VRBBAD
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       mov  r4,r0
+       bl   @VRR1
+       clr  r6
+       cb   r6,r2
+       jne  VRBBAD
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       inc  r4
+       dec  r5
+       jne  VRB1
+
+       mov  r8,r4
+       li   r5,>0100
+VRB2   mov  r4,r0
+       bl   @VRR1
+       li   r6,>ff00
+       cb   r6,r2
+       jne  VRBBAD
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       inc  r4
+       dec  r5
+       jne  VRB2
+
+       mov  r8,r4
+       ai   r4,>00ff
+       li   r5,>0100
+VRB3   mov  r4,r0
+       bl   @VRR1
+       li   r6,>ff00
+       cb   r6,r2
+       jne  VRBBAD
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       dec  r4
+       dec  r5
+       jne  VRB3
+
+       mov  r8,r4
+       ai   r4,>00ff
+       li   r5,>0100
+VRB4   mov  r4,r0
+       bl   @VRR1
+       clr  r6
+       cb   r6,r2
+       jne  VRBBAD
+       mov  r4,r0
+       li   r1,>ff00
+       bl   @VRW1
+       mov  r4,r0
+       clr  r1
+       bl   @VRW1
+       dec  r4
+       dec  r5
+       jne  VRB4
+       b    *r13
+VRBBAD mov  r6,r1
+       mov  r4,r0
+       jmp  VRBAD
+
+VRBAD0 clr  r0
+       clr  r1
+       jmp  VRBAD
+VRBADA mov  r6,r0
+       mov  r7,r1
+VRBAD  mov  r0,@FAILAD
+       mov  r1,@FAILXP
+       mov  r2,@FAILAC
+       mov  r1,r3
+       xor  r2,r3
+       mov  r3,@FAILMS
+       li   r3,FVDP
+       soc  r3,@RESFLG
+       b    *r13
+
+* R1 high byte is the fill/expected value.
+VRFILL mov  r11,r10
+       clr  r0
+       bl   @SETAW
+       li   r2,>4000
+VRFLP  movb r1,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  VRFLP
+       b    *r10
+
+VRVER  mov  r11,r10
+       clr  r0
+       bl   @SETAR
+       li   r3,>4000
+       clr  r0
+VRVLP  movb @VDPDAT,r2
+       inc  @VDPDLY
+       cb   r1,r2
+       jne  VRVBD
+       inc  r0
+       dec  r3
+       jne  VRVLP
+       b    *r10
+VRVBD  jmp  VRBAD
+
+* R0=VRAM address, R1 high byte=data.
+VRW1   mov  r11,r9
+       bl   @SETAW
+       movb r1,@VDPDAT
+       inc  @VDPDLY
+       b    *r9
+
+* R0=VRAM address, result R2 high byte.
+VRR1   mov  r11,r9
+       bl   @SETAR
+       clr  r2
+       movb @VDPDAT,r2
+       inc  @VDPDLY
+       b    *r9
+
+SETAW  mov  r0,r3
+       swpb r3
+       movb r3,@VDPCTL
+       inc  @VDPDLY
+       mov  r0,r3
+       andi r3,>3f00
+       ori  r3,>4000
+       movb r3,@VDPCTL
+       inc  @VDPDLY
+       rt
+
+SETAR  mov  r0,r3
+       swpb r3
+       movb r3,@VDPCTL
+       inc  @VDPDLY
+       mov  r0,r3
+       andi r3,>3f00
+       movb r3,@VDPCTL
+       inc  @VDPDLY
+       rt
+
+VRPATS byte >00,>ff,>aa,>55,>01,>02,>04,>08,>10,>20,>40,>80
+       byte >fe,>fd,>fb,>f7,>ef,>df,>bf,>7f
+VFPATS byte >00,>ff,>aa,>55
+       even
+
+* ---------------------------------------------------------------------------
+* Optional extension discovery
+* ---------------------------------------------------------------------------
+
+* Save one word in each candidate window, write complementary patterns,
+* verify they remain independent, and restore before setting a result flag.
+EXTPRB mov  @>6000,r4
+       mov  @>c000,r5
+       li   r6,>35ac
+       li   r7,>ca53
+       mov  r6,@>6000
+       c    @>6000,r6
+       jne  EXTNO
+       mov  r7,@>c000
+       mov  @>6000,r8
+       mov  @>c000,r9
+       mov  r4,@>6000
+       mov  r5,@>c000
+       c    r8,r6
+       jne  EXTNO2
+       c    r9,r7
+       jne  EXTNO2
+       li   r0,1
+       mov  r0,@EXTFLG
+       rt
+EXTNO  mov  r4,@>6000
+       mov  r5,@>c000
+* Absence is normal: clear only the presence flag, never the failure flags.
+EXTNO2 clr  @EXTFLG
+       rt
+
+* ---------------------------------------------------------------------------
+* Presentation, timing, keyboard, and controller viewer
+* ---------------------------------------------------------------------------
+
+MENUDR mov  r11,r12
+       li   r0,>4f87              * Tomy-inspired dark-blue on white theme
+       bl   @VDPREGW
+       li   r1,BRANDT
+       bl   @PUTTTL
+       li   r0,>0022
+       li   r1,DIAGT
+       bl   @PUTSTR
+       li   r0,>0042
+       li   r1,URLT
+       bl   @PUTSTR
+       li   r0,>0062
+       li   r1,EXPERM
+       bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,REGIONT
+       bl   @PUTSTR
+       li   r0,>00aa
+       .ifeq REGION,>0000
+       li   r1,TUTORT
+       .else
+       li   r1,PYUUTT
+       .endif
+       bl   @PUTSTR
+       li   r0,>00c2
+       li   r1,EXTTXT
+       bl   @PUTSTR
+       li   r0,>00ca
+       li   r1,NOEXTT
+       mov  @EXTFLG,r2
+       jeq  MENUEX
+       li   r1,TANAMT
+MENUEX bl   @PUTSTR
+       li   r0,>0102
+       li   r1,MENU1T
+       bl   @PUTSTR
+       li   r0,>0142
+       li   r1,MENU2T
+       bl   @PUTSTR
+       li   r0,>0182
+       li   r1,MENU3T
+       bl   @PUTSTR
+       li   r0,>01c2
+       li   r1,MENU4T
+       bl   @PUTSTR
+       li   r0,>0202
+       li   r1,MENU5T
+       bl   @PUTSTR
+       li   r0,>0242
+       li   r1,MENU6T
+       bl   @PUTSTR
+       li   r0,>0282
+       li   r1,MENU7T
+       bl   @PUTSTR
+       li   r0,>02c2
+       li   r1,MENU8T
+       bl   @PUTSTR
+       mov  @RESFLG,r0
+       jeq  MENUGR
+       li   r0,>4687              * real failures alone get a red border
+       jmp  MENUBD
+MENUGR li   r0,>4487
+MENUBD bl   @VDPREGW
+       b    *r12
+
+* Keyboard and rear controllers use different CRU selection paths. Their
+* operator views also stay on separate pages so neither live display crowds
+* or overwrites the other.
+INPLAB mov  r11,@MENURT
+INPDR  bl   @SCRINI
+       li   r1,INPTTL
+       bl   @PUTTTL
+       li   r0,>0083
+       li   r1,INPKBD
+       bl   @PUTSTR
+       li   r0,>00c3
+       li   r1,INPJOY
+       bl   @PUTSTR
+       li   r0,>0103
+       li   r1,INPBACK
+       bl   @PUTSTR
+INPKEY bl   @KEYSCN
+       mov  @KEYBUF,r0
+       andi r0,>0100
+       jne  INPKGO
+       mov  @KEYBUF,r0
+       andi r0,>0200
+       jne  INPJGO
+       mov  @KEYBUF+8,r0
+       andi r0,>0100
+       jeq  INPKEY
+       bl   @KEYREL
+       mov  @MENURT,r11
+       b    *r11
+INPKGO bl   @KEYREL
+       bl   @KBDPG
+       jmp  INPDR
+INPJGO bl   @KEYREL
+       bl   @JOYPG
+       jmp  INPDR
+
+KBDPG  mov  r11,@SUBRET
+       clr  @KEYHELD
+       clr  @KEYCNT
+       clr  @HOLDCT
+       clr  @KEYMODE              * regional native view is the safe default
+KBDRDR
+       bl   @SCRINI
+       li   r1,KBDTTL
+       bl   @PUTTTL
+       li   r0,>0042
+       li   r1,REGIONT
+       bl   @PUTSTR
+       li   r0,>004a
+       .ifeq REGION,>0000
+       li   r1,TUTORT
+       .else
+       li   r1,PYUUTT
+       .endif
+       bl   @PUTSTR
+       li   r0,>0062
+       li   r1,VIEWTX
+       bl   @PUTSTR
+       li   r0,>0068
+       li   r1,PCVIEW
+       mov  @KEYMODE,r2
+       jne  KBDVIW
+       .ifeq REGION,>0000
+       li   r1,TUTORT
+       .else
+       li   r1,PYUUTT
+       .endif
+KBDVIW bl   @PUTSTR
+       li   r0,>0082
+       li   r1,LASTTX
+       bl   @PUTSTR
+       li   r0,>0088
+       li   r1,NOKEYT
+       bl   @PUTSTR
+       li   r0,>0099
+       li   r1,HASHTX
+       bl   @PUTSTR
+       li   r0,>009a
+       clr  r1
+       bl   @PUTHEX
+       li   r0,>00c2
+       li   r1,RAWTTL
+       bl   @PUTSTR
+       li   r0,>0102
+       li   r1,KEY0T
+       bl   @PUTSTR
+       li   r0,>0142
+       li   r1,KEY1T
+       bl   @PUTSTR
+       li   r0,>0182
+       li   r1,KEY2T
+       bl   @PUTSTR
+       li   r0,>01c2
+       li   r1,KEY3T
+       bl   @PUTSTR
+       li   r0,>0242
+       li   r1,KBDHELP
+       bl   @PUTSTR
+       li   r0,>02c2
+       li   r1,FOOTTX
+       bl   @PUTSTR
+KBDLOP bl   @KEYUPD
+       mov  @KEYBUF+8,r0
+       andi r0,>0100
+       jeq  KBDMOD
+       mov  @KEYBUF+12,r0         * Shift+zero is '=' on the native map
+       andi r0,>0400              * and cannot be the page-exit gesture
+       jne  KBDMOD
+       bl   @VDPVB
+       inc  @HOLDCT
+       mov  @HOLDCT,r0
+       ci   r0,60                 * approximately one second at 60 Hz
+       jl   KBDLOP
+       bl   @KEYREL
+       mov  @SUBRET,r11
+       b    *r11
+KBDMOD mov  @KEYBUF+12,r0
+       andi r0,>4000              * MOD is R6B6
+       jeq  KBDARM
+       bl   @VDPVB
+       inc  @HOLDCT
+       mov  @HOLDCT,r0
+       ci   r0,60                 * quick MOD remains an ordinary test press
+       jl   KBDLOP
+       mov  @KEYMODE,r0
+       inv  r0
+       andi r0,1
+       mov  r0,@KEYMODE
+       clr  @HOLDCT
+       bl   @KEYREL               * one deliberate toggle per hold
+       b    @KBDRDR
+KBDARM clr  @HOLDCT
+       jmp  KBDLOP
+
+JOYPG  mov  r11,@SUBRET
+       bl   @SCRINI
+       li   r1,JOYTTL
+       bl   @PUTTTL
+       li   r0,>0042
+       li   r1,JOYNOTE
+       bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,JOY1T
+       bl   @PUTSTR
+       li   r0,>00c2
+       li   r1,JOYRAW
+       bl   @PUTSTR
+       li   r0,>00ca
+       clr  r1
+       bl   @PUTHEX
+       li   r0,>0102
+       li   r1,JOYLEG
+       bl   @PUTSTR
+       li   r0,>0162
+       li   r1,JOY2T
+       bl   @PUTSTR
+       li   r0,>0182
+       li   r1,JOYRAW
+       bl   @PUTSTR
+       li   r0,>018a
+       clr  r1
+       bl   @PUTHEX
+       li   r0,>01c2
+       li   r1,JOYLEG
+       bl   @PUTSTR
+       li   r0,>0242
+       li   r1,JOYHELP
+       bl   @PUTSTR
+       li   r0,>02c2
+       li   r1,BACKT
+       bl   @PUTSTR
+JOYLOP bl   @JOYUPD
+       mov  @KEYBUF+8,r0
+       andi r0,>0100
+       jeq  JOYLOP
+       bl   @KEYREL
+       mov  @SUBRET,r11
+       b    *r11
+
+JOYUPD mov  r11,r15
+       bl   @JOYSCN
+       mov  @JOYBUF,r1
+       srl  r1,8
+       li   r0,>00ca
+       bl   @PUTHEX
+       mov  @JOYBUF+2,r1
+       srl  r1,8
+       li   r0,>018a
+       bl   @PUTHEX
+       mov  @JOYBUF,r6
+       li   r7,JOY1PS
+       bl   @JOYBIT
+       mov  @JOYBUF+2,r6
+       li   r7,JOY2PS
+       bl   @JOYBIT
+       bl   @KEYSCN               * keyboard 0 remains the page exit control
+       b    *r15
+
+JOYBIT mov  r11,r13
+       li   r5,JOYMASK            * fire, left, right, down, up
+       li   r8,5
+JOYBLP li   r1,>2d00              * '-' means open
+       mov  *r5+,r4
+       coc  r4,r6
+       jne  JOYBOF
+       li   r1,>3100              * '1' means asserted
+JOYBOF mov  *r7+,r0
+       bl   @VRW1
+       dec  r8
+       jne  JOYBLP
+       b    *r13
+
+* The Tutor/Pyuuta controllers are physical input-matrix rows, not a TI-style
+* output-selected multiplexer. The stock BIOS and physically exercised shim
+* read port 1 at >EC40 and port 2 at >EC50. Bits are asserted high:
+* D,L,U,R at bits 4..7, SL/fire at bit 2, and SR at bit 3.
+JOYSCN mov  r11,r14
+       li   r12,>ec40
+       li   r8,JOYBUF
+       clr  r0
+       stcr r0,8
+       mov  r0,*r8+
+       li   r12,>ec50
+       clr  r0
+       stcr r0,8
+       mov  r0,*r8+
+       b    *r14
+
+* VRAM test lab: choose a GUI-restoring chunk scrub or strict whole-memory
+* March-B. They are separate because repainting between March elements would
+* invalidate the state and cross-block coupling coverage of the strict test.
+VRDEEP mov  r11,@MENURT
+VRLAB  bl   @SCRINI
+       li   r1,VRLTTL
+       bl   @PUTTTL
+       li   r0,>0062
+       li   r1,VRLL1
+       bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,VRLL2
+       bl   @PUTSTR
+       li   r0,>00e2
+       li   r1,VRLL5
+       bl   @PUTSTR
+       li   r0,>0142
+       li   r1,VRLL3
+       bl   @PUTSTR
+       li   r0,>0182
+       li   r1,VRLL4
+       bl   @PUTSTR
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+VRLKEY bl   @KEYSCN
+       mov  @KEYBUF,r0
+       andi r0,>0100
+       jeq  VRLK2
+       b    @VRSCRB
+VRLK2
+       mov  @KEYBUF,r0
+       andi r0,>0200
+       jne  VRDFUL
+       mov  @KEYBUF+2,r0
+       andi r0,>0100
+       jne  VRDCON
+       mov  @KEYBUF+8,r0
+       andi r0,>0100
+       jeq  VRLKEY
+       bl   @KEYREL
+       mov  @MENURT,r11
+       b    *r11
+VRDFUL clr  @RUNMOD
+       jmp  VRDWAR
+VRDCON li   r0,1
+       mov  r0,@RUNMOD
+VRDWAR bl   @KEYREL
+       bl   @SCRINI
+       li   r1,VRWTTL
+       bl   @PUTTTL
+       li   r0,>0063
+       li   r1,VRWCOL
+       bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,VRWPAU
+       bl   @PUTSTR
+       li   r0,>00e3
+       li   r1,VRWERR
+       bl   @PUTSTR
+       li   r0,>0122
+       li   r1,VRWRST
+       bl   @PUTSTR
+       li   r0,>0186
+       li   r1,VRWAUT
+       bl   @PUTSTR
+       li   r0,>01ca
+       li   r1,VRWCD
+       bl   @PUTSTR
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+       clr  @ABORTF
+       li   r6,3                 * readable three-second safety countdown
+VRDWCS mov  r6,r1
+       sla  r1,8
+       ai   r1,>3000
+       li   r0,>01d5
+       bl   @VRW1
+       li   r5,60
+VRDWCL bl   @VDPVB
+       bl   @POLL0
+       mov  r0,r0
+       jne  VRDWCN
+       dec  r5
+       jne  VRDWCL
+       dec  r6
+       jne  VRDWCS
+       jmp  VRDGO
+VRDWCN bl   @KEYREL
+       b    @VRLAB
+VRDGO  bl   @KEYREL
+       clr  @BURNCT
+VRDAGN bl   @SCRINI
+       li   r1,VRDTTL
+       bl   @PUTTTL
+       li   r0,>0062
+       li   r1,VRDL1
+       bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,VRDL2
+       bl   @PUTSTR
+       li   r0,>00e2
+       li   r1,VRDL3
+       bl   @PUTSTR
+       li   r0,>0122
+       li   r1,VRDL4
+       bl   @PUTSTR
+       li   r0,>0162
+       li   r1,VRDL5
+       bl   @PUTSTR
+       li   r0,>0183
+       li   r1,VRDWAIT
+       bl   @PUTSTR
+       mov  @BURNCT,r0            * only pause on entry, not every repeat pass
+       jne  VRDPDN
+       li   r5,120                * about two seconds at 60 Hz; no second count
+VRDPRE bl   @VDPVB
+       dec  r5
+       jne  VRDPRE
+VRDPDN
+       clr  @FAILAD
+       clr  @FAILXP
+       clr  @FAILAC
+       clr  @FAILMS
+       li   r0,FVDP
+       szc  r0,@RESFLG
+       clr  @ABORTF
+       bl   @VRMARCH
+       mov  @ABORTF,r0
+       jeq  VRDCHK
+       bl   @KEYREL
+       jmp  VRDRES
+VRDCHK
+       mov  @RESFLG,r0
+       andi r0,FVDP
+       jne  VRDRES
+       inc  @BURNCT
+       mov  @RUNMOD,r0
+       jne  VRDAGN
+VRDRES bl   @SCRINI
+       li   r1,VRDRTTL
+       bl   @PUTTTL
+       li   r0,>0064
+       li   r1,VRDRSL
+       bl   @PUTSTR
+       li   r0,>0076
+       li   r1,PASSTX
+       mov  @ABORTF,r2
+       jeq  VRDRF
+       li   r1,STOPTX
+       jmp  VRDRP
+VRDRF
+       mov  @RESFLG,r2
+       andi r2,FVDP
+       jeq  VRDRP
+       li   r1,FAILTX
+VRDRP  bl   @PUTSTR
+       li   r0,>00a4
+       li   r1,VADRTX
+       bl   @PUTSTR
+       li   r0,>00b6
+       mov  @FAILAD,r1
+       bl   @PUTHEX
+       li   r0,>00e4
+       li   r1,VMASKT
+       bl   @PUTSTR
+       li   r0,>00f6
+       mov  @FAILMS,r1
+       bl   @PUTHEX
+       li   r0,>0124
+       li   r1,PASCTT
+       bl   @PUTSTR
+       li   r0,>0136
+       mov  @BURNCT,r1
+       bl   @PUTHEX
+       li   r0,>0183
+       li   r1,VRDRUN
+       bl   @PUTSTR
+       li   r0,>01a3
+       li   r1,VRDMNU
+       bl   @PUTSTR
+VRDKEY bl   @KEYSCN
+       mov  @KEYBUF,r0
+       andi r0,>0200              * 2 runs one complete pass
+       jeq  VRDK3
+       bl   @KEYREL
+       clr  @RUNMOD
+       b    @VRDGO
+VRDK3
+       mov  @KEYBUF+2,r0
+       andi r0,>0100              * 3 runs continuously
+       jeq  VRDK0
+       bl   @KEYREL
+       li   r0,1
+       mov  r0,@RUNMOD
+       b    @VRDGO
+VRDK0
+       mov  @KEYBUF+8,r0
+       andi r0,>0100
+       jeq  VRDKEY
+       bl   @KEYREL
+       mov  @MENURT,r11
+       b    *r11
+
+* GUI-restoring scrub: local 17N March-B on each 256-byte block. The screen is
+* rebuilt from ROM before every block, so overwritten text/patterns return.
+* This covers every byte but is intentionally not claimed as whole-array
+* inter-block coupling coverage; option 2 provides that strict test.
+VRSCRB bl   @KEYREL
+       clr  @ABORTF
+       clr  @SCRADR
+       clr  @SCRNUM
+       clr  @FAILAD
+       clr  @FAILXP
+       clr  @FAILAC
+       clr  @FAILMS
+       li   r0,FVDP
+       szc  r0,@RESFLG
+VRSCLP bl   @SCRINI
+       li   r1,VRSCTT
+       bl   @PUTTTL
+       li   r0,>0063
+       li   r1,VRSCL1
+       bl   @PUTSTR
+       li   r0,>00a4
+       li   r1,VRSCA
+       bl   @PUTSTR
+       li   r0,>00b8
+       mov  @SCRADR,r1
+       bl   @PUTHEX
+       li   r0,>00e4
+       li   r1,VRSCN
+       bl   @PUTSTR
+       li   r0,>00f8
+       mov  @SCRNUM,r1
+       bl   @PUTHEX
+       li   r0,>02c3
+       li   r1,VRDL5
+       bl   @PUTSTR
+       bl   @VDPVB
+       mov  @SCRADR,r8
+       bl   @VRBLK
+       bl   @POLL0
+       mov  r0,r0
+       jne  VRSCDN
+       mov  @RESFLG,r0
+       andi r0,FVDP
+       jne  VRSCDN
+       inc  @SCRNUM
+       mov  @SCRADR,r0
+       ai   r0,>0100
+       mov  r0,@SCRADR
+       mov  @SCRNUM,r0
+       ci   r0,64
+       jl   VRSCLP
+VRSCDN bl   @SCRINI
+       li   r1,VRSCRT
+       bl   @PUTTTL
+       li   r0,>0062
+       li   r1,VRDRSL
+       bl   @PUTSTR
+       li   r0,>0077
+       li   r1,PASSTX
+       mov  @ABORTF,r2
+       jeq  VRSCRF
+       li   r1,STOPTX
+       jmp  VRSCP
+VRSCRF
+       mov  @RESFLG,r2
+       andi r2,FVDP
+       jeq  VRSCP
+       li   r1,FAILTX
+VRSCP  bl   @PUTSTR
+       li   r0,>00a4
+       li   r1,VADRTX
+       bl   @PUTSTR
+       li   r0,>00b8
+       mov  @FAILAD,r1
+       bl   @PUTHEX
+       li   r0,>00e4
+       li   r1,VMASKT
+       bl   @PUTSTR
+       li   r0,>00f8
+       mov  @FAILMS,r1
+       bl   @PUTHEX
+       li   r0,>0142
+       li   r1,VRSCOV
+       bl   @PUTSTR
+       li   r0,>0182
+       li   r1,VRSCBK
+       bl   @PUTSTR
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+       bl   @WAIT0
+       b    @VRLAB
+
+* Board-revision-qualified bit-lane lookup. Draw the physical 2x4 DRAM bank
+* as chip packages; a star inside a package marks each failing data lane.
+VRCHIP mov  r11,r12
+       bl   @SCRINI
+       li   r1,CHIPTT
+       bl   @PUTTTL
+       li   r0,>0043
+       li   r1,CHIPM1
+       bl   @PUTSTR
+       li   r0,>004e
+       mov  @FAILMS,r1
+       bl   @PUTHEX
+       li   r0,>0063
+       li   r1,CHIPA1
+       bl   @PUTSTR
+       li   r0,>006e
+       mov  @FAILAD,r1
+       bl   @PUTHEX
+       li   r0,>0083
+       li   r1,CHIPLEG
+       bl   @PUTSTR
+       li   r0,>00a7
+       li   r1,CHIPSTAR
+       bl   @PUTSTR
+       li   r0,>00c1
+       li   r1,CHIPBT
+       bl   @PUTSTR
+       li   r0,>00e1
+       li   r1,CHIP01
+       bl   @PUTSTR
+       li   r0,>0101
+       li   r1,CHIPBB
+       bl   @PUTSTR
+       li   r0,>0121
+       li   r1,CHIPBT
+       bl   @PUTSTR
+       li   r0,>0141
+       li   r1,CHIP23
+       bl   @PUTSTR
+       li   r0,>0161
+       li   r1,CHIPBB
+       bl   @PUTSTR
+       li   r0,>0181
+       li   r1,CHIPBT
+       bl   @PUTSTR
+       li   r0,>01a1
+       li   r1,CHIP45
+       bl   @PUTSTR
+       li   r0,>01c1
+       li   r1,CHIPBB
+       bl   @PUTSTR
+       li   r0,>01e1
+       li   r1,CHIPBT
+       bl   @PUTSTR
+       li   r0,>0201
+       li   r1,CHIP67
+       bl   @PUTSTR
+       li   r0,>0221
+       li   r1,CHIPBB
+       bl   @PUTSTR
+       bl   @CHIPMK
+       li   r0,>0263
+       li   r1,CHIPRV
+       bl   @PUTSTR
+       li   r0,>0283
+       li   r1,CHIPWN
+       bl   @PUTSTR
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+       mov  @FAILMS,r0
+       jeq  CHIPRT
+       li   r0,>4687              * a diagnosed lane keeps the failure border
+       bl   @VDPREGW
+CHIPRT
+       b    *r12
+
+CHIPMK mov  r11,r13
+       mov  @FAILMS,r6
+       li   r7,CHIPPS
+       li   r5,>0100
+       li   r8,8
+CHIPML mov  *r7+,r0
+       coc  r5,r6
+       jne  CHIPMN
+       li   r1,>2a00              * star inside every suspected package
+       bl   @VRW1
+CHIPMN sla  r5,1
+       dec  r8
+       jne  CHIPML
+       b    *r13
+
+* Optional destructive 17N March-B across both physically proven independent
+* Tanam windows. Discovery alone never calls this path; key 7 confirms twice.
+TANRAM mov  r11,@MENURT
+       bl   @SCRINI
+       li   r1,TANTTL
+       bl   @PUTTTL
+       mov  @EXTFLG,r0
+       jne  TANASK
+       li   r0,>0082
+       li   r1,TANNO
+       bl   @PUTSTR
+       li   r0,>00c2
+       li   r1,TANSKIP
+       bl   @PUTSTR
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+       bl   @WAIT0
+       b    @TANRET
+TANASK li   r0,>0062
+       li   r1,TANYES
+       bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,TANWARN
+       bl   @PUTSTR
+       li   r0,>00e2
+       li   r1,TANW2
+       bl   @PUTSTR
+       li   r0,>0122
+       li   r1,TANCONF
+       bl   @PUTSTR
+       li   r0,>0162
+       li   r1,TANCONT
+       bl   @PUTSTR
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+TANCK  bl   @KEYSCN
+       mov  @KEYBUF,r0
+       andi r0,>0100
+       jne  TANONE
+       mov  @KEYBUF,r0
+       andi r0,>0200
+       jne  TANCON
+       mov  @KEYBUF+8,r0
+       andi r0,>0100
+       jeq  TANCK
+       bl   @KEYREL
+       b    @TANRET
+TANONE clr  @RUNMOD
+       jmp  TANRUN
+TANCON li   r0,1
+       mov  r0,@RUNMOD
+TANRUN bl   @KEYREL
+       clr  @BURNCT
+TANAGN bl   @SCRINI
+       li   r1,TANRNG
+       bl   @PUTTTL
+       li   r0,>0062
+       li   r1,TANSTOP
+       bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,PASCTT
+       bl   @PUTSTR
+       li   r0,>00b4
+       mov  @BURNCT,r1
+       bl   @PUTHEX
+       li   r0,>00e2
+       li   r1,TANWIN
+       bl   @PUTSTR
+       li   r0,>00f0
+       li   r1,>6000
+       bl   @PUTHEX
+       li   r0,FEXT
+       szc  r0,@RESFLG
+       clr  @ABORTF
+       clr  @FAILAD
+       clr  @FAILXP
+       clr  @FAILAC
+       clr  @FAILMS
+       li   r0,>4487
+       bl   @VDPREGW
+       li   r8,>6000
+       bl   @TANMB
+       mov  @ABORTF,r0
+       jne  TANABT
+       mov  @RESFLG,r0
+       andi r0,FEXT
+       jne  TANRSL
+       li   r0,>4787
+       bl   @VDPREGW
+       li   r0,>00f0
+       li   r1,>c000
+       bl   @PUTHEX
+       li   r8,>c000
+       bl   @TANMB
+       mov  @ABORTF,r0
+       jne  TANABT
+       mov  @RESFLG,r0
+       andi r0,FEXT
+       jne  TANRSL
+       inc  @BURNCT
+       mov  @RUNMOD,r0
+       jne  TANAGN
+       jmp  TANRSL
+TANABT bl   @KEYREL
+TANRSL bl   @SCRINI
+       li   r1,TANRTT
+       bl   @PUTTTL
+       li   r0,>0062
+       li   r1,TANR1
+       bl   @PUTSTR
+       li   r0,>0077
+       li   r1,PASSTX
+       mov  @ABORTF,r2
+       jeq  TANRRF
+       li   r1,STOPTX
+       jmp  TANRPS
+TANRRF
+       mov  @RESFLG,r2
+       andi r2,FEXT
+       jeq  TANRPS
+       li   r1,FAILTX
+TANRPS bl   @PUTSTR
+       li   r0,>00a4
+       li   r1,TANADT
+       bl   @PUTSTR
+       li   r0,>00b8
+       mov  @FAILAD,r1
+       bl   @PUTHEX
+       li   r0,>00e4
+       li   r1,TANMST
+       bl   @PUTSTR
+       li   r0,>00f8
+       mov  @FAILMS,r1
+       bl   @PUTHEX
+       li   r0,>0142
+       li   r1,TANRDON
+       bl   @PUTSTR
+       li   r0,>0184
+       li   r1,PASCTT
+       bl   @PUTSTR
+       li   r0,>0196
+       mov  @BURNCT,r1
+       bl   @PUTHEX
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+       mov  @RESFLG,r0
+       andi r0,FEXT
+       jeq  TANRGR
+       li   r0,>4687
+       jmp  TANRBD
+TANRGR li   r0,>4287
+TANRBD bl   @VDPREGW
+       bl   @WAIT0
+TANRET mov  @MENURT,r11
+       b    *r11
+
+* R8 is the base of one 8 KiB window. Word accesses cover every byte.
+TANMB  mov  r11,r13
+       clr  @TSTPHS
+       li   r0,>4487
+       bl   @VDPREGW
+       mov  r8,r4
+       li   r5,>1000
+       li   r7,>0100
+TMB0   clr  *r4+
+       dec  r5
+       jeq  TMB0D
+       dec  r7
+       jne  TMB0
+       bl   @POLL0
+       mov  r0,r0
+       jeq  TMB0C
+       b    @TMBAB
+TMB0C
+       li   r7,>0100
+       jmp  TMB0
+TMB0D
+
+* M1 ascending: r0,w1,r1,w0,r0,w1.
+       li   r0,1
+       mov  r0,@TSTPHS
+       li   r0,>4787
+       bl   @VDPREGW
+       mov  r8,r4
+       li   r5,>1000
+       li   r7,>0100
+TMB1   mov  *r4,r2
+       clr  r6
+       c    r6,r2
+       jeq  TMB1A
+       b    @TMBAD
+TMB1A
+       seto *r4
+       mov  *r4,r2
+       seto r6
+       c    r6,r2
+       jeq  TMB1B
+       jmp  TMBAD
+TMB1B
+       clr  *r4
+       mov  *r4,r2
+       clr  r6
+       c    r6,r2
+       jeq  TMB1C
+       jmp  TMBAD
+TMB1C
+       seto *r4
+       inct r4
+       dec  r5
+       jeq  TMB1D
+       dec  r7
+       jne  TMB1
+       bl   @POLL0
+       mov  r0,r0
+       jne  TMBAB
+       li   r7,>0100
+       jmp  TMB1
+TMB1D
+
+* M2 ascending: r1,w0,w1.
+       li   r0,2
+       mov  r0,@TSTPHS
+       li   r0,>4587
+       bl   @VDPREGW
+       mov  r8,r4
+       li   r5,>1000
+       li   r7,>0100
+TMB2   mov  *r4,r2
+       seto r6
+       c    r6,r2
+       jne  TMBAD
+       clr  *r4
+       seto *r4
+       inct r4
+       dec  r5
+       jeq  TMB2D
+       dec  r7
+       jne  TMB2
+       bl   @POLL0
+       mov  r0,r0
+       jne  TMBAB
+       li   r7,>0100
+       jmp  TMB2
+TMB2D
+
+* M3 descending: r1,w0,w1,w0.
+       li   r0,3
+       mov  r0,@TSTPHS
+       li   r0,>4a87
+       bl   @VDPREGW
+       mov  r8,r4
+       ai   r4,>1ffe
+       li   r5,>1000
+       li   r7,>0100
+TMB3   mov  *r4,r2
+       seto r6
+       c    r6,r2
+       jne  TMBAD
+       clr  *r4
+       seto *r4
+       clr  *r4
+       dect r4
+       dec  r5
+       jeq  TMB3D
+       dec  r7
+       jne  TMB3
+       bl   @POLL0
+       mov  r0,r0
+       jne  TMBAB
+       li   r7,>0100
+       jmp  TMB3
+TMB3D
+
+* M4 descending: r0,w1,w0.
+       li   r0,4
+       mov  r0,@TSTPHS
+       li   r0,>4c87
+       bl   @VDPREGW
+       mov  r8,r4
+       ai   r4,>1ffe
+       li   r5,>1000
+       li   r7,>0100
+TMB4   mov  *r4,r2
+       clr  r6
+       c    r6,r2
+       jne  TMBAD
+       seto *r4
+       clr  *r4
+       dect r4
+       dec  r5
+       jeq  TMB4D
+       dec  r7
+       jne  TMB4
+       bl   @POLL0
+       mov  r0,r0
+       jne  TMBAB
+       li   r7,>0100
+       jmp  TMB4
+TMB4D
+       li   r0,5
+       mov  r0,@TSTPHS
+       b    *r13
+TMBAB  b    *r13
+TMBAD  mov  r4,@FAILAD
+       mov  r6,@FAILXP
+       mov  r2,@FAILAC
+       mov  r6,r3
+       xor  r2,r3
+       mov  r3,@FAILMS
+       li   r3,FEXT
+       soc  r3,@RESFLG
+       b    *r13
+
+MUSPG  mov  r11,r12
+       bl   @SCRINI
+       li   r1,MUSTTL
+       bl   @PUTTTL
+       li   r0,>0062
+       li   r1,MUSL1
+       bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,MUSL2
+       bl   @PUTSTR
+       li   r0,>00e2
+       li   r1,MUSL3
+       bl   @PUTSTR
+       li   r0,>0142
+       li   r1,MUSL4
+       bl   @PUTSTR
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+       b    *r12
+
+* TMS9918A showcase: original pattern streaming, five same-scanline sprites,
+* collision/overflow status capture, 8x8/16x16/magnified modes, and the scoped,
+* approved MegaDemo bank-18 raster-wave adaptation documented below.
+VDPSHW mov  r11,@MENURT
+       clr  @VDPSTA
+       bl   @SCRINI
+       li   r1,VDPDTL
+       bl   @PUTTTL
+       li   r0,>0042
+       li   r1,VDPDL1
+       bl   @PUTSTR
+       li   r0,>0062
+       li   r1,VDPDL2
+       bl   @PUTSTR
+       li   r0,>0282
+       li   r1,VDPDL3
+       bl   @PUTSTR
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+
+* Eight animated tile patterns at character codes 128..135.
+       li   r0,>0c00
+       bl   @SETAW
+       li   r1,DEMOPAT
+       li   r2,64
+VDPLDP movb *r1+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  VDPLDP
+       li   r0,>00a1              * rows 5..18, preserving both frame columns
+       li   r9,14
+       li   r6,>8000
+VDPFRW bl   @SETAW
+       li   r2,30
+VDPFLD movb r6,@VDPDAT
+       inc  @VDPDLY
+       ai   r6,>0100
+       ci   r6,>8800
+       jne  VDPFNC
+       li   r6,>8000
+VDPFNC dec  r2
+       jne  VDPFLD
+       ai   r0,32
+       dec  r9
+       jne  VDPFRW
+
+* Five sprites deliberately share a scanline; the first pair overlap.
+       bl   @LDSPAT
+       li   r0,SABASE
+       bl   @SETAW
+       li   r1,DEMOAT
+       li   r2,21
+VDPLDA movb *r1+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  VDPLDA
+       clr  r4
+       clr  r6
+VDPANM bl   @VDPVB
+       inc  r4
+       inc  r6
+       andi r6,>00ff
+
+* Stream one rotating pattern every frame.
+       mov  r4,r7
+       andi r7,7
+       sla  r7,3
+       ai   r7,DEMOFR
+       li   r0,>0c00
+       bl   @SETAW
+       li   r2,8
+VDPFRL movb *r7+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  VDPFRL
+
+* Sprite pair 0/1 collides while moving; other sprites move in opposition.
+       mov  r6,r1
+       swpb r1
+       li   r0,>0301
+       bl   @VRW1
+       mov  r6,r1
+       swpb r1
+       li   r0,>0305
+       bl   @VRW1
+       li   r1,>00ff
+       s    r6,r1
+       swpb r1
+       li   r0,>0309
+       bl   @VRW1
+       mov  r6,r1
+       ai   r1,64
+       andi r1,>00ff
+       swpb r1
+       li   r0,>030d
+       bl   @VRW1
+       li   r1,>00bf
+       s    r6,r1
+       andi r1,>00ff
+       swpb r1
+       li   r0,>0311
+       bl   @VRW1
+
+       ci   r4,120
+       jne  VDPS16
+       li   r0,>c281              * 16x16 sprites
+       bl   @VDPREGW
+VDPS16 ci   r4,240
+       jne  VDPEXT
+       li   r0,>c381              * 16x16, 2x magnified
+       bl   @VDPREGW
+VDPEXT bl   @KEYSCN
+       mov  @KEYBUF+8,r0
+       andi r0,>0100
+       jne  VDPDONE
+       ci   r4,360
+       jl   VDPANM
+       bl   @VDPMDS
+
+VDPDONE
+       bl   @PSGMUT
+       bl   @SCRINI
+       li   r1,VDPRTL
+       bl   @PUTTTL
+       li   r0,>0062
+       li   r1,VDPRL1
+       bl   @PUTSTR
+       li   r0,>0076
+       li   r1,SEENTX
+       mov  @VDPSTA,r2
+       andi r2,>2000
+       jne  VDPROK
+       li   r1,NOTSEE
+VDPROK bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,VDPRL2
+       bl   @PUTSTR
+       li   r0,>00b6
+       li   r1,SEENTX
+       mov  @VDPSTA,r2
+       andi r2,>4000
+       jne  VDPFOK
+       li   r1,NOTSEE
+VDPFOK bl   @PUTSTR
+       li   r0,>0102
+       li   r1,VDPRL3
+       bl   @PUTSTR
+       li   r0,>0142
+       li   r1,VDPRL4
+       bl   @PUTSTR
+       li   r0,>0182
+       li   r1,VDPRL5
+       bl   @PUTSTR
+       li   r0,>02c6
+       li   r1,BACKT
+       bl   @PUTSTR
+       bl   @WAIT0
+       mov  @MENURT,r11
+       b    *r11
+
+* Poll a fresh VBlank and retain sprite collision/fifth-sprite status bits.
+VDPVB  mov  r11,r14
+VDPVBL clr  r0
+       movb @VDPCTL,r0
+       mov  r0,r1
+       andi r1,>6000
+       soc  r1,@VDPSTA
+       andi r0,>8000
+       jeq  VDPVBL
+       b    *r14
+
+* Cycle the remaining documented TMS9918A modes with original generated data.
+VDPMDS mov  r11,r12
+
+* 40-column Text mode, including the real lowercase glyph set.
+       bl   @SCRINI
+       clr  r0
+       bl   @SETAW
+       li   r1,>2000
+       li   r2,>03c0
+VDMTCL movb r1,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  VDMTCL
+       li   r0,>0005
+       li   r1,VDMT1
+       bl   @PUTSTR
+       li   r0,>0052
+       li   r1,VDMT2
+       bl   @PUTSTR
+       li   r0,>00a3
+       li   r1,VDMT3
+       bl   @PUTSTR
+       li   r0,>00f2
+       li   r1,VDMT4
+       bl   @PUTSTR
+       li   r0,>d081
+       bl   @VDPREGW
+       li   r5,120
+       bl   @VDPHLD
+
+* Multicolor mode: generated 4x4-cell color mosaic.
+       li   r0,>8081
+       bl   @VDPREGW
+       clr  r0
+       bl   @SETAW
+       li   r2,>0300
+       clr  r6
+VDMMNM movb r6,@VDPDAT
+       inc  @VDPDLY
+       ai   r6,>0100
+       dec  r2
+       jne  VDMMNM
+       li   r0,>0800
+       bl   @SETAW
+       li   r2,>0800
+       li   r6,>2345
+VDMMPT movb r6,@VDPDAT
+       inc  @VDPDLY
+       ai   r6,>1100
+       dec  r2
+       jne  VDMMPT
+       li   r0,>c881
+       bl   @VDPREGW
+       li   r5,120
+       bl   @VDPHLD
+
+* Graphics-I raster wave adapted from the approved MegaDemo bank-18 effect.
+* Eight name-table phases and paired transparent sprites let register 2/3
+* changes follow the beam in eight-line bands instead of merely changing a
+* completed frame. The silent showcase lasts three seconds; menu item 5 runs
+* the same effect with the beat-aligned MegaDemo PSG passage.
+       bl   @WAVINI
+       li   r5,180
+VDMWLP bl   @WAVFRM
+       bl   @POLL0
+       mov  r0,r0
+       jne  VDMWDN
+       dec  r5
+       jne  VDMWLP
+VDMWDN
+       bl   @SCRINI
+       b    *r12
+
+* Build the striped field used by the bank-18 raster technique. Display stays
+* off while the eight 1 KiB name-table phases and Graphics-I tables load.
+WAVINI mov  r11,r13
+       clr  @WFRAME
+       clr  @WPHASE
+       li   r1,WAVREG
+       li   r2,8
+WAVRLP mov  *r1+,r0
+       bl   @VDPREGW
+       dec  r2
+       jne  WAVRLP
+
+* Eight name-table pages: each column advances by eight character codes and
+* each page offsets the starting code by one pixel phase.
+       clr  r4
+       clr  r5
+       li   r6,8
+WAVNPG mov  r4,r0
+       bl   @SETAW
+       li   r3,24
+WAVNRW li   r2,32
+       mov  r5,r1
+WAVNCL movb r1,@VDPDAT
+       inc  @VDPDLY
+       ai   r1,>0800
+       dec  r2
+       jne  WAVNCL
+       dec  r3
+       jne  WAVNRW
+       ai   r4,>0400
+       ai   r5,>0100
+       dec  r6
+       jne  WAVNPG
+
+* Shifted bitmap copies create the vertical strokes; the sparse Graphics-I
+* color tables below supply the red/white/green phase sequence.
+       li   r0,>2000
+       bl   @SETAW
+       li   r4,32
+WAVTBL li   r1,>af00
+       li   r5,>5f00
+       li   r3,8
+WAVTGP li   r2,4
+WAVTPR movb r1,@VDPDAT
+       inc  @VDPDLY
+       movb r5,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  WAVTPR
+       srl  r1,1
+       srl  r5,1
+       dec  r3
+       jne  WAVTGP
+       dec  r4
+       jne  WAVTBL
+
+       li   r0,>2800
+       bl   @SETAW
+       li   r1,>ff00
+       li   r2,32
+WAVSPT movb r1,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  WAVSPT
+
+* Eight color-table phases at >3000,>3040,...,>31C0. Each 32-byte
+* Graphics-I color table repeats one eight-byte phase four times. The unused
+* 32 bytes between tables are deliberate; register 3 selects in >40-byte
+* increments. This sparse layout is essential to the raster effect.
+       li   r0,>3000
+       li   r1,WAVPAT
+       li   r6,8
+WAVCPG bl   @SETAW
+       li   r4,4
+WAVCRP mov  r1,r7
+       li   r2,8
+WAVCWR movb *r7+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  WAVCWR
+       dec  r4
+       jne  WAVCRP
+       ai   r0,>0040
+       ai   r1,8
+       dec  r6
+       jne  WAVCPG
+
+       li   r0,>e281              * display on, 16 KiB, Graphics I
+       bl   @VDPREGW
+       b    *r13
+
+* Render one complete wavy frame. A VBlank starts the frame; two overlapping
+* transparent sprites are then moved down in eight-line steps. Their collision
+* bit is the beam-position reference used by the original MegaDemo technique.
+* The bounded wait prevents an incompatible VDP clone from hanging the BIOS.
+WAVFRM mov  r11,r13
+       bl   @VDPVB
+       mov  @WFRAME,r6
+       andi r6,>0007
+       jne  WAVPHS
+       li   r0,>fff8
+       a    r0,@WPHASE
+WAVPHS mov  @WPHASE,r4
+WAVBLP mov  r4,r1
+       andi r1,>00ff
+       sla  r1,1
+       mov  @WAVSIN(r1),r1
+       sra  r1,3
+
+       mov  r1,r0
+       andi r0,>0007
+       swpb r0
+       movb r0,@VDPCTL
+       inc  @VDPDLY
+       li   r2,>8200
+       movb r2,@VDPCTL
+       inc  @VDPDLY
+       andi r1,>0038
+       srl  r1,3
+       ai   r1,>00c0
+       swpb r1
+       movb r1,@VDPCTL
+       inc  @VDPDLY
+       li   r2,>8300
+       movb r2,@VDPCTL
+       inc  @VDPDLY
+
+       ci   r6,>00c0
+       jhe  WAVBND
+       mov  r6,r1
+       swpb r1
+       bl   @WAVSPR
+       li   r14,>ffff
+WAVCOL movb @VDPCTL,r0
+       andi r0,>2000
+       jne  WAVCDN
+       dec  r14
+       jne  WAVCOL
+WAVCDN ai   r4,8
+       ai   r6,8
+       jmp  WAVBLP
+WAVBND mov  @WFRAME,r1
+       srl  r1,1
+       andi r1,>01fe
+       mov  @WAVSIN(r1),r1
+       sra  r1,5
+       a    r1,@WPHASE
+       inc  @WFRAME
+       mov  @WFRAME,r0
+       andi r0,>03ff
+       mov  r0,@WFRAME
+       b    *r13
+
+* R1 high byte is the collision scanline. The two color-zero 16x16 sprites
+* overlap exactly; a third Y=>D0 record terminates the list.
+WAVSPR mov  r11,r9
+       li   r0,>3800
+       bl   @SETAW
+       ai   r1,>fe00
+       li   r3,>ff00
+       movb r1,@VDPDAT
+       inc  @VDPDLY
+       movb r3,@VDPDAT
+       inc  @VDPDLY
+       clr  r3
+       movb r3,@VDPDAT
+       inc  @VDPDLY
+       movb r3,@VDPDAT
+       inc  @VDPDLY
+       movb r1,@VDPDAT
+       inc  @VDPDLY
+       li   r3,>ff00
+       movb r3,@VDPDAT
+       inc  @VDPDLY
+       clr  r3
+       movb r3,@VDPDAT
+       inc  @VDPDLY
+       movb r3,@VDPDAT
+       inc  @VDPDLY
+       li   r3,>d000
+       movb r3,@VDPDAT
+       inc  @VDPDLY
+       movb @VDPCTL,r0            * discard stale collision; wait for a new one
+       b    *r9
+
+VDPHLD mov  r11,r13
+VDPHLL bl   @VDPVB
+       bl   @POLL0
+       mov  r0,r0
+       jne  VDPHDN
+       dec  r5
+       jne  VDPHLL
+VDPHDN b    *r13
+
+SCRINI mov  r11,r13
+       bl   @VDPINI
+       clr  r0
+       bl   @SETAW
+       li   r1,>2000              * ASCII space
+       li   r2,>0300
+SCRCL  movb r1,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  SCRCL
+       li   r0,>0900              * pattern slot 32
+       bl   @SETAW
+       li   r1,FONT
+       li   r2,>0300              * ASCII 32..127, including true lowercase
+SCRFN  movb *r1+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  SCRFN
+       li   r0,>0880              * private characters >10..>15
+       bl   @SETAW
+       li   r1,FRAMEG
+       li   r2,48                 * rounded TL/TR/BL/BR, horizontal, vertical
+SCRFG  movb *r1+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  SCRFG
+       li   r0,>08b0              * private bold menu numerals >16..>1D
+       bl   @SETAW
+       li   r1,ACKGLY
+       li   r2,64
+SCRAG  movb *r1+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  SCRAG
+       li   r0,CTBASE
+       bl   @SETAW
+       li   r1,COLORS
+       li   r2,32
+SCRCO  movb *r1+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  SCRCO
+* Ordinary pages must never inherit a diagnostic/demo sprite. Terminate the
+* sprite list explicitly; the VDP showcase loads its own patterns/attributes.
+       li   r0,SABASE
+       li   r1,>d000
+       bl   @VRW1
+       li   r0,>c081              * 16K, display on, VDP IRQ disabled
+       bl   @VDPREGW
+       bl   @SCRFRM               * consistent professional frame on all pages
+       b    *r13
+
+* Fixed 32x24 page frame using private joined-line glyphs >10..>15. Keeping
+* their codes below >80 lets a D7-stuck-low fault page retain its border.
+* Titles interrupt the rail; square corners avoid a composite-visible shelf.
+SCRFRM mov  r11,r10
+       clr  r0
+       bl   @SETAW
+       li   r1,>1000              * square top-left
+       movb r1,@VDPDAT
+       inc  @VDPDLY
+       li   r1,>1400              * joined horizontal rail
+       li   r2,30
+SCRFT1 movb r1,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  SCRFT1
+       li   r1,>1100              * square top-right
+       movb r1,@VDPDAT
+       inc  @VDPDLY
+       li   r0,>02e0              * row 23
+       bl   @SETAW
+       li   r1,>1200              * square bottom-left
+       movb r1,@VDPDAT
+       inc  @VDPDLY
+       li   r1,>1400
+       li   r2,30
+SCRFB1 movb r1,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  SCRFB1
+       li   r1,>1300              * square bottom-right
+       movb r1,@VDPDAT
+       inc  @VDPDLY
+       li   r6,>0020              * rows 1..22, columns 0 and 31
+       li   r8,22
+SCRFSD mov  r6,r0
+       li   r1,>1500              * joined vertical rail
+       bl   @VRW1
+       ai   r0,31
+       bl   @VRW1
+       ai   r6,32
+       dec  r8
+       jne  SCRFSD
+       b    *r10
+
+LDSPAT mov  r11,r10
+       li   r0,SPBASE
+       bl   @SETAW
+       li   r1,SPRITE
+       li   r2,32
+LDSP1  movb *r1+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  LDSP1
+       b    *r10
+
+* Clear a pending status bit, then require a new VBlank status transition.
+* The TP1000 VDP INT pin is unconnected, so this deliberately polls status.
+TIMTST movb @VDPCTL,r0
+       li   r1,>ffff
+TIMLP  movb @VDPCTL,r0
+       andi r0,>8000
+       jne  TIMOK
+       dec  r1
+       jne  TIMLP
+       li   r0,FTIME
+       soc  r0,@RESFLG
+       clr  @TIMFLG
+       rt
+TIMOK  li   r0,1
+       mov  r0,@TIMFLG
+       rt
+
+SUMMARY mov r11,r12
+       li   r1,SYSRTT
+       bl   @PUTTTL
+       li   r0,>0022
+       li   r1,VERST
+       bl   @PUTSTR
+       li   r0,>0062
+       li   r1,REGIONT
+       bl   @PUTSTR
+       li   r0,>006c
+       .ifeq REGION,>0000
+       li   r1,TUTORT
+       .else
+       li   r1,PYUUTT
+       .endif
+       bl   @PUTSTR
+       li   r0,>00a2
+       li   r1,CPUTX
+       bl   @PUTSTR
+       li   r0,>00b8
+       li   r1,PASSTX
+       mov  @RESFLG,r2
+       andi r2,FCPU
+       jeq  SUMCP
+       li   r1,FAILTX
+SUMCP  bl   @PUTSTR
+       li   r0,>00c2
+       li   r1,RAMTX
+       bl   @PUTSTR
+       li   r0,>00d8
+       li   r1,PASSTX
+       mov  @RESFLG,r2
+       andi r2,FRAM
+       jeq  SUMRA
+       li   r1,FAILTX
+SUMRA  bl   @PUTSTR
+       li   r0,>00e2
+       li   r1,ROMTX
+       bl   @PUTSTR
+       li   r0,>00f8
+       li   r1,PASSTX
+       mov  @RESFLG,r2
+       andi r2,FROM
+       jeq  SUMRO
+       li   r1,FAILTX
+SUMRO  bl   @PUTSTR
+       li   r0,>0102
+       li   r1,ROMSUT
+       bl   @PUTSTR
+       li   r0,>0113
+       mov  @ROMSUM,r1
+       bl   @PUTHEX
+       li   r0,>0117
+       li   r1,SLASHT
+       bl   @PUTSTR
+       li   r0,>0118
+       mov  @ROMSM2,r1
+       bl   @PUTHEX
+       li   r0,>0142
+       li   r1,VDPTX
+       bl   @PUTSTR
+       mov  @RESFLG,r2
+       andi r2,FVDP
+       jeq  SUMVP
+       li   r0,>0158
+       li   r1,FAILTX
+       bl   @PUTSTR
+       jmp  SUMVX
+SUMVP  li   r0,>0158
+       li   r1,PASSTX
+       bl   @PUTSTR
+SUMVX  li   r0,>0162
+       li   r1,VADRTX
+       bl   @PUTSTR
+       li   r0,>0178
+       mov  @FAILAD,r1
+       bl   @PUTHEX
+       li   r0,>0182
+       li   r1,VMASKT
+       bl   @PUTSTR
+       li   r0,>0198
+       mov  @FAILMS,r1
+       bl   @PUTHEX
+       li   r0,>01a2
+       li   r1,TIMETX
+       bl   @PUTSTR
+       li   r0,>01b8
+       li   r1,PASSTX
+       mov  @TIMFLG,r2
+       jne  SUMTM
+       li   r1,FAILTX
+SUMTM  bl   @PUTSTR
+       li   r0,>01e2
+       li   r1,MAP0TX
+       bl   @PUTSTR
+       li   r0,>01f4
+       li   r1,DIAGMP
+       bl   @PUTSTR
+       li   r0,>0202
+       li   r1,MAPXTX
+       bl   @PUTSTR
+       li   r0,>0217
+       li   r1,NORWTX
+       mov  @EXTFLG,r2
+       jeq  SUMMP
+       li   r0,>0215
+       li   r1,RWRWTX
+SUMMP  bl   @PUTSTR
+       li   r0,>0222
+       li   r1,EXTTXT
+       bl   @PUTSTR
+       mov  @EXTFLG,r2
+       jne  SUMETN
+       li   r0,>022f
+       li   r1,NOEXTT
+       jmp  SUMEX
+SUMETN li   r0,>022c
+       li   r1,TANAMT
+SUMEX  bl   @PUTSTR
+       li   r0,>02c2
+       li   r1,BACKT
+       bl   @PUTSTR
+       mov  @RESFLG,r0
+       jne  SUMRED
+       li   r0,>4287              * green border on all automatic passes
+       jmp  SUMBRD
+SUMRED li   r0,>4687
+SUMBRD bl   @VDPREGW
+       b    *r12
+
+* Scan all eight keyboard-matrix rows and update four compact row-pair displays.
+KEYUPD mov  r11,r13
+       bl   @KEYSCN
+       bl   @KEYDEC
+       li   r6,KEYBUF
+       li   r7,KEYPOS
+       li   r8,8
+KEYDSP mov  *r6+,r1
+       srl  r1,8
+       mov  *r7+,r0
+       bl   @PUTHEX
+       dec  r8
+       jne  KEYDSP
+       b    *r13
+
+* Raw scan without presentation side effects, used by every menu and page.
+KEYSCN mov  r11,r14
+       li   r12,>ec00
+       li   r8,KEYBUF
+       li   r9,8
+KEYULP clr  r0
+       stcr r0,8
+       mov  r0,*r8+
+       ai   r12,>0010
+       dec  r9
+       jne  KEYULP
+       b    *r14
+
+* Latch the first asserted contact so a short/bouncing key remains readable.
+* The fixed 16-byte label also includes the electrically observed row/bit.
+KEYDEC mov  r11,r15
+       li   r6,KEYBUF
+       clr  r4                    * row
+KEYDRW mov  *r6+,r0
+       srl  r0,8
+       jne  KEYDBT
+       inc  r4
+       ci   r4,8
+       jne  KEYDRW
+       clr  @KEYHELD
+       b    *r15
+KEYDBT clr  r5                    * bit
+       li   r1,1
+KEYDBL coc  r1,r0
+       jeq  KEYDFD
+       sla  r1,1
+       inc  r5
+       jmp  KEYDBL
+KEYDFD mov  r4,r3
+       sla  r3,3
+       a    r5,r3                 * decoded index 0..63
+       mov  r3,r2
+       inc  r2                    * zero remains the no-key sentinel
+       c    r2,@KEYHELD
+       jeq  KEYDOLD
+       mov  r2,@KEYHELD
+       inc  @KEYCNT
+KEYDOLD
+       mov  r3,r7                 * preserve 0..63 index for Shift decoding
+       sla  r3,4                  * fixed label size = 16
+       ai   r3,KEYNAM
+       li   r0,>0088
+       mov  r3,r1
+       li   r2,16
+       bl   @PUTFIX
+       mov  @KEYMODE,r0
+       jeq  KEYDNS
+       mov  r7,r3
+       sla  r3,3
+       ai   r3,PCNAM
+       li   r0,>0088
+       mov  r3,r1
+       li   r2,8
+       bl   @PUTFIX
+KEYDNS
+       mov  @KEYBUF+12,r0
+       andi r0,>0400              * native Shift contact R6B2
+       jeq  KEYDNM
+       sla  r7,3                  * eight-byte shifted key name
+       ai   r7,KEYSHF
+       mov  @KEYMODE,r0
+       jeq  KEYDSH
+       ai   r7,PCSHF-KEYSHF
+KEYDSH
+       li   r0,>0088
+       mov  r7,r1
+       li   r2,8
+       bl   @PUTFIX
+KEYDNM
+       li   r0,>009a
+       mov  @KEYCNT,r1
+       bl   @PUTHEX
+       b    *r15
+
+KEYPOS data >0105,>010d,>0145,>014d
+       data >0185,>018d,>01c5,>01cd
+JOY1PS data >0122,>0127,>012a,>012d,>0130
+JOY2PS data >01e2,>01e7,>01ea,>01ed,>01f0
+JOYMASK data >0400,>2000,>8000,>1000,>4000
+CHIPPS data >00e2,>00f2,>0142,>0152
+       data >01a2,>01b2,>0202,>0212
+
+VDPREGW
+       movb r0,@VDPCTL
+       inc  @VDPDLY
+       swpb r0
+       movb r0,@VDPCTL
+       inc  @VDPDLY
+       rt
+
+* Center a length-prefixed title on the 32-column top rail. Odd spare columns
+* leave the extra cell on the right, matching every other centered page item.
+PUTTTL mov  r11,r15
+       clr  r0
+       movb *r1,r0
+       srl  r0,8
+       li   r2,32
+       s    r0,r2
+       srl  r2,1
+       mov  r2,r0
+       bl   @PUTSTR
+       b    *r15
+
+PUTSTR mov  r11,r14
+       bl   @SETAW
+       clr  r2
+       movb *r1+,r2
+       srl  r2,8
+       jeq  PUTSRT
+PUTSLP movb *r1+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  PUTSLP
+PUTSRT b    *r14
+
+* R0=VRAM address, R1=ROM pointer, R2=exact byte count.
+PUTFIX mov  r11,r14
+       bl   @SETAW
+PUTFLP movb *r1+,@VDPDAT
+       inc  @VDPDLY
+       dec  r2
+       jne  PUTFLP
+       b    *r14
+
+PUTHEX mov  r11,r14
+       mov  r1,r10
+       bl   @SETAW
+       li   r2,4
+HEXLP  mov  r10,r3
+       andi r3,>f000
+       srl  r3,12
+       movb @HEXDIG(r3),@VDPDAT
+       inc  @VDPDLY
+       sla  r10,4
+       dec  r2
+       jne  HEXLP
+       b    *r14
+
+* ---------------------------------------------------------------------------
+* Audio feedback
+* ---------------------------------------------------------------------------
+
+PSGMUT li   r0,>9f00
+       movb r0,@SNDOUT
+       li   r0,>bf00
+       movb r0,@SNDOUT
+       li   r0,>df00
+       movb r0,@SNDOUT
+       li   r0,>ff00
+       movb r0,@SNDOUT
+       rt
+
+BOOTBP mov  r11,r10
+       li   r0,>8600
+       movb r0,@SNDOUT
+       li   r0,>1200
+       movb r0,@SNDOUT
+       li   r0,>9000
+       movb r0,@SNDOUT
+       bl   @SNDDEL
+       bl   @PSGMUT
+       b    *r10
+
+PASSBP mov  r11,r10
+       li   r0,>8800
+       movb r0,@SNDOUT
+       li   r0,>0800
+       movb r0,@SNDOUT
+       li   r0,>9100
+       movb r0,@SNDOUT
+       bl   @SNDDEL
+       li   r0,>8400
+       movb r0,@SNDOUT
+       bl   @SNDDEL
+       bl   @PSGMUT
+       b    *r10
+
+FAILBP mov  r11,r10
+       li   r0,>e700              * noise control + audible noise volume
+       movb r0,@SNDOUT
+       li   r0,>f200
+       movb r0,@SNDOUT
+       bl   @SNDDEL
+       bl   @PSGMUT
+       b    *r10
+
+* Audible channel walk: tones 0, 1, 2, then noise.  Listening is the test.
+PSGTST mov  r11,r10
+       li   r2,PSGSEQ
+       li   r3,4
+PSGSLP movb *r2+,@SNDOUT
+       movb *r2+,@SNDOUT
+       movb *r2+,@SNDOUT
+       bl   @SNDDEL
+       bl   @PSGMUT
+       dec  r3
+       jne  PSGSLP
+       b    *r10
+
+* MegaDemo high-energy PSG excerpt and bank-18 raster wave. The 224-frame
+* phrase begins/ends at identical PSG state on a musical beat; eight repeats
+* run 29.897 seconds at 60000/1001 Hz. Jon reports permission granted for
+* Pyuuta/Tutor and TI diagnostic hardware (2026-09-01).
+PSGMUS mov  r11,r10
+       clr  @ABORTF
+       bl   @PSGMUT
+       bl   @WAVINI
+       li   r7,8
+MUSREP
+       li   r5,MDPSG
+MUSNXT clr  r8
+       movb *r5+,r8              * frame delay
+       jeq  MUSRPT               * zero terminates one phrase
+       srl  r8,8
+MUSDLY bl   @WAVFRM
+       bl   @POLL0
+       mov  r0,r0
+       jne  MUSEND
+       dec  r8
+       jne  MUSDLY
+       clr  r6
+       movb *r5+,r6              * raw PSG byte count
+       srl  r6,8
+MUSWRT movb *r5+,@SNDOUT
+       inc  @VDPDLY              * also spaces writes for the faster TMS9995
+       dec  r6
+       jne  MUSWRT
+       jmp  MUSNXT
+MUSRPT
+       dec  r7
+       jne  MUSREP
+MUSEND
+       bl   @PSGMUT
+       b    *r10
+
+SNDDEL li   r1,>4000
+SNDDLP dec  r1
+       jne  SNDDLP
+       rt
+
+PSGSEQ byte >88,>10,>90             * channel 0
+       byte >a8,>10,>b0             * channel 1
+       byte >c8,>10,>d0             * channel 2
+       byte >e4,>00,>f0             * periodic noise
+       even
+
+* MegaDemo high-energy PSG loop from global capture frames 16820..17044.
+* The first event restores the complete boundary state before applying frame
+* 16822. The state at 17044 exactly matches 16820, making all eight repeats
+* beat- and register-continuous. Format is delay, count, raw PSG bytes; zero ends.
+MDPSG
+       byte >02,>0c,>80,>0f,>90,>a0,>0f,>b7,>c9,>09,>df,>e3,>f4,>92
+       byte >02,>01,>93
+       byte >0a,>03,>8d,>11,>90
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >10,>01,>94
+       byte >02,>01,>95
+       byte >02,>01,>97
+       byte >02,>01,>9f
+       byte >02,>01,>90
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >0a,>0a,>e3,>f6,>c0,>0c,>ad,>11,>b9,>8e,>0b,>90
+       byte >02,>03,>f4,>b7,>92
+       byte >02,>03,>f3,>b6,>93
+       byte >02,>02,>f2,>b5
+       byte >02,>02,>f3,>b6
+       byte >02,>02,>f4,>b7
+       byte >02,>02,>f3,>b6
+       byte >02,>03,>8d,>11,>90
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >02,>02,>f4,>b7
+       byte >0e,>01,>94
+       byte >02,>01,>95
+       byte >02,>01,>97
+       byte >02,>01,>9f
+       byte >02,>03,>8e,>0b,>90
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >0a,>0a,>e3,>f6,>cb,>0a,>ae,>0f,>b9,>86,>0d,>90
+       byte >02,>03,>f4,>b7,>92
+       byte >02,>03,>f3,>b6,>93
+       byte >02,>02,>f2,>b5
+       byte >02,>02,>f3,>b6
+       byte >02,>02,>f4,>b7
+       byte >02,>02,>f3,>b6
+       byte >08,>05,>f4,>b7,>8e,>0f,>94
+       byte >02,>01,>91
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >08,>03,>80,>14,>90
+       byte >02,>01,>91
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >02,>03,>8d,>17,>90
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >0a,>0a,>e3,>f6,>c9,>09,>a0,>0f,>b9,>8d,>11,>90
+       byte >02,>03,>f4,>b7,>92
+       byte >02,>03,>f3,>b6,>93
+       byte >02,>02,>f2,>b5
+       byte >02,>02,>f3,>b6
+       byte >02,>02,>f4,>b7
+       byte >02,>02,>f3,>b6
+       byte >02,>03,>8d,>17,>90
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >02,>05,>f4,>b7,>8d,>11,>90
+       byte >02,>01,>91
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >08,>01,>90
+       byte >02,>01,>91
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >02,>03,>8e,>0f,>90
+       byte >02,>01,>92
+       byte >02,>01,>93
+       byte >0a,>03,>80,>0f,>90
+       byte 0
+
+* ---------------------------------------------------------------------------
+* Tables, strings, font, and visual assets
+* ---------------------------------------------------------------------------
+
+VDPREG data >0080,>8081,>0082,>0e83
+       data >0184,>0685,>0386,>4f87
+* Graphics-I colors are per group of eight patterns. ASCII 32..127 is kept
+* consistently dark blue on white; the upper groups are reserved for demos.
+COLORS byte >4f,>4f,>4f,>4f,>4f,>4f,>4f,>4f
+       byte >4f,>4f,>4f,>4f,>4f,>4f,>4f,>4f
+       byte >5f,>7f,>2f,>af,>cf,>6f,>8f,>df
+       byte >4f,>4f,>4f,>4f,>4f,>4f,>4f,>4f
+* MegaDemo bank-18 raster-wave assets, adapted under Jon's reported scoped
+* permission for Pyuuta/Tutor and TI diagnostic hardware. WAVREG first blanks
+* the display while the tables load; WAVINI enables it with register 1=>E2.
+* Bank 18 uses Graphics I (R0=>00), not Graphics II. R4 selects the pattern
+* table at >2000 and R3 selects one of the color tables at >3000..>31C0.
+WAVREG data >0080,>a281,>0082,>c083
+       data >0484,>7085,>0586,>0087
+WAVPAT byte >6f,>86,>98,>e9,>ce,>2c,>32,>f3
+       byte >f3,>6f,>86,>98,>e9,>ce,>2c,>32
+       byte >32,>f3,>6f,>86,>98,>e9,>ce,>2c
+       byte >2c,>32,>f3,>6f,>86,>98,>e9,>ce
+       byte >ce,>2c,>32,>f3,>6f,>86,>98,>e9
+       byte >e9,>ce,>2c,>32,>f3,>6f,>86,>98
+       byte >98,>e9,>ce,>2c,>32,>f3,>6f,>86
+       byte >86,>98,>e9,>ce,>2c,>32,>f3,>6f
+* Original 256-word signed sine used by the approved bank-18 raster routine.
+* Keeping word precision preserves both the per-band displacement and the
+* slower phase-acceleration envelope; the earlier 64-byte approximation did
+* neither faithfully enough for physical TMS9918 timing.
+WAVSIN data >0000,>0006,>000d,>0013,>0019,>001f,>0026,>002c
+       data >0032,>0038,>003e,>0044,>004a,>0050,>0056,>005c
+       data >0062,>0068,>006d,>0073,>0079,>007e,>0084,>0089
+       data >008e,>0093,>0098,>009d,>00a2,>00a7,>00ac,>00b1
+       data >00b5,>00b9,>00be,>00c2,>00c6,>00ca,>00ce,>00d1
+       data >00d5,>00d8,>00dc,>00df,>00e2,>00e5,>00e7,>00ea
+       data >00ed,>00ef,>00f1,>00f3,>00f5,>00f7,>00f8,>00fa
+       data >00fb,>00fc,>00fd,>00fe,>00fe,>00fe,>00ff,>00ff
+       data >00ff,>00ff,>00ff,>00fe,>00fe,>00fe,>00fd,>00fc
+       data >00fb,>00fa,>00f8,>00f7,>00f5,>00f3,>00f1,>00ef
+       data >00ed,>00ea,>00e7,>00e5,>00e2,>00df,>00dc,>00d8
+       data >00d5,>00d1,>00ce,>00ca,>00c6,>00c2,>00be,>00b9
+       data >00b5,>00b1,>00ac,>00a7,>00a2,>009d,>0098,>0093
+       data >008e,>0089,>0084,>007e,>0079,>0073,>006d,>0068
+       data >0062,>005c,>0056,>0050,>004a,>0044,>003e,>0038
+       data >0032,>002c,>0026,>001f,>0019,>0013,>000d,>0006
+       data >0000,>fffa,>fff3,>ffed,>ffe7,>ffe1,>ffda,>ffd4
+       data >ffce,>ffc8,>ffc2,>ffbc,>ffb6,>ffb0,>ffaa,>ffa4
+       data >ff9e,>ff98,>ff93,>ff8d,>ff87,>ff82,>ff7c,>ff77
+       data >ff72,>ff6d,>ff68,>ff63,>ff5e,>ff59,>ff54,>ff4f
+       data >ff4b,>ff47,>ff42,>ff3e,>ff3a,>ff36,>ff32,>ff2f
+       data >ff2b,>ff28,>ff24,>ff21,>ff1e,>ff1b,>ff19,>ff16
+       data >ff13,>ff11,>ff0f,>ff0d,>ff0b,>ff09,>ff08,>ff06
+       data >ff05,>ff04,>ff03,>ff02,>ff01,>ff01,>ff00,>ff00
+       data >ff00,>ff00,>ff00,>ff01,>ff01,>ff02,>ff03,>ff04
+       data >ff05,>ff06,>ff08,>ff09,>ff0b,>ff0d,>ff0f,>ff11
+       data >ff13,>ff16,>ff19,>ff1b,>ff1e,>ff21,>ff24,>ff28
+       data >ff2b,>ff2f,>ff32,>ff36,>ff3a,>ff3e,>ff42,>ff47
+       data >ff4b,>ff4f,>ff54,>ff59,>ff5e,>ff63,>ff68,>ff6d
+       data >ff72,>ff77,>ff7c,>ff82,>ff87,>ff8d,>ff93,>ff98
+       data >ff9e,>ffa4,>ffaa,>ffb0,>ffb6,>ffbc,>ffc2,>ffc8
+       data >ffce,>ffd4,>ffda,>ffe1,>ffe7,>ffed,>fff3,>fffa
+
+BRANDT byte 19
+       text 'Hexbus Tutor/Pyuuta'
+DIAGT  byte 27
+       text '16 KiB Diagnostic BIOS v1.0'
+URLT   byte 26
+       text 'github.com/hexbus  -  2026'
+EXPERM byte 28
+       text 'RELEASE v1.0 - USE WITH CARE'
+MENU1T byte 21
+       text '1  System Information'
+MENU2T byte 20
+       text '2  Test Keyboard/Joy'
+MENU3T byte 12
+       text '3  Test VRAM'
+MENU4T byte 24
+       text '4  TMS9918A Pattern Test'
+MENU5T byte 19
+       text '5  Wave + PSG Music'
+MENU6T byte 23
+       text '6  Identify Bad VRAM IC'
+MENU7T byte 28
+       text '7  Tanam External Board Test'
+MENU8T byte 10
+       text '8  Credits'
+BACKT  byte 12
+       text '0  Main menu'
+
+CREDTT byte 18
+       text 'Credits and Thanks'
+CREDJ  byte 15
+       text 'Jon G. (hexbus)'
+CREDJF byte 15
+       text 'Jim F. (Ksarul)'
+CREDTN byte 20
+       text 'Takeo N. (Tanam1972)'
+CREDRM byte 18
+       text 'Rasmus M. (Rasmus)'
+CREDMB byte 14
+       text 'Mike B (Tursi)'
+CREDMD byte 13
+       text 'MegaDemo team'
+CREDAA byte 20
+       text 'AtariAge TI-99 Forum'
+CREDTB data >00a8,CREDJ
+       data >00e8,CREDJF
+       data >0126,CREDTN
+       data >0167,CREDRM
+       data >01a9,CREDMB
+       data >01e9,CREDMD
+       data >0226,CREDAA
+
+INPTTL byte 25
+       text 'Test Keyboard / Joysticks'
+INPKBD byte 16
+       text '1  Test Keyboard'
+INPJOY byte 17
+       text '2  Test Joysticks'
+INPBACK byte 22
+       text '0  Return to main menu'
+KBDTTL byte 21
+       text 'Keyboard Contact Test'
+RAWTTL byte 29
+       text 'RAW MATRIX - PRESSED BITS = 1'
+KBDHELP byte 27
+       text 'Hold MOD for native/PC view'
+JOYTTL byte 26
+       text 'Controller / Joystick Test'
+JOYNOTE byte 23
+       text 'LIVE ROWS >EC40 / >EC50'
+JOY1T  byte 17
+       text 'PLAYER 1 / PORT 1'
+JOY2T  byte 17
+       text 'PLAYER 2 / PORT 2'
+JOYRAW byte 4
+       text 'RAW>'
+JOYLEG byte 16
+       text 'FIRE LT RT DN UP'
+JOYHELP byte 22
+       text '1 = pressed   - = open'
+
+VRLTTL byte 9
+       text 'Test VRAM'
+VRLL1  byte 25
+       text '1  Screen-Preserving Test'
+VRLL2  byte 28
+       text '2  Full VRAM Test - One Pass'
+VRLL5  byte 25
+       text '3  Full Test - Continuous'
+VRLL3  byte 29
+       text 'Tests and restores each block'
+VRLL4  byte 28
+       text 'Full test checks entire VRAM'
+VRWTTL byte 22
+       text 'Full VRAM Test Warning'
+VRWCOL byte 25
+       text 'SCREEN COLORS WILL CHANGE'
+VRWPAU byte 28
+       text 'CONTROLS PAUSE DURING A PASS'
+VRWERR byte 25
+       text 'RED BORDER = MEMORY ERROR'
+VRWRST byte 28
+       text 'BAD ADDRESS + BITS ARE SAVED'
+VRWAUT byte 20
+       text 'HOLD 0 NOW TO CANCEL'
+VRWCD  byte 12
+       text 'STARTING IN '
+VRSCTT byte 22
+       text 'Screen-Preserving Test'
+VRSCL1 byte 26
+       text 'Testing one 256-byte block'
+VRSCA  byte 16
+       text 'Current address>'
+VRSCN  byte 16
+       text 'Blocks complete>'
+VRSCRT byte 24
+       text 'Screen-Preserving Result'
+VRSCOV byte 25
+       text 'All 16 KiB of VRAM tested'
+VRSCBK byte 27
+       text 'Screen restored every block'
+
+VRDTTL byte 22
+       text 'Full VRAM Test - Ready'
+VRDL1  byte 27
+       text 'March-B tests every address'
+VRDL2  byte 23
+       text 'and every VRAM data bit'
+VRDL3  byte 27
+       text 'Colors show the test phases'
+VRDL4  byte 26
+       text 'Please wait - do not reset'
+VRDL5  byte 26
+       text '0 stops after a safe block'
+VRDWAIT byte 19
+       text 'Test begins shortly'
+VRDRTTL byte 21
+       text 'Full VRAM Test Result'
+VRDRSL byte 15
+       text 'March-B result:'
+PASCTT byte 17
+       text 'Completed passes:'
+VRDRUN byte 25
+       text '2 one pass   3 continuous'
+VRDMNU byte 26
+       text '0 main menu - result stays'
+STOPTX byte 7
+       text 'STOPPED'
+
+CHIPTT byte 20
+       text 'Identify Bad VRAM IC'
+CHIPM1 byte 11
+       text 'FAIL MASK >'
+CHIPA1 byte 11
+       text 'FIRST ADDR>'
+CHIPLEG byte 26
+       text 'IC=BOARD ID   Dn=DATA LANE'
+CHIPSTAR byte 18
+       text '* = SUSPECTED LANE'
+* Two 14-column package outlines using the same joined-line glyphs as the
+* page frame. Keeping top and bottom distinct gives each DRAM a real rounded
+* package outline rather than an ASCII-art approximation.
+CHIPBT byte 30
+       byte >10,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>11
+       byte >20,>20
+       byte >10,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>11
+CHIPBB byte 30
+       byte >12,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>13
+       byte >20,>20
+       byte >12,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>14,>13
+CHIP01 byte 30
+       byte >15
+       text ' IC:D1 D0   '
+       byte >15,>20,>20,>15
+       text ' IC:D2 D1   '
+       byte >15
+CHIP23 byte 30
+       byte >15
+       text ' IC:C1 D2   '
+       byte >15,>20,>20,>15
+       text ' IC:C2 D3   '
+       byte >15
+CHIP45 byte 30
+       byte >15
+       text ' IC:B1 D4   '
+       byte >15,>20,>20,>15
+       text ' IC:B2 D5   '
+       byte >15
+CHIP67 byte 30
+       byte >15
+       text ' IC:A1 D6   '
+       byte >15,>20,>20,>15
+       text ' IC:A2 D7   '
+       byte >15
+CHIPRV byte 23
+       text 'TP1000 MID-REVISION MAP'
+CHIPWN byte 24
+       text 'VERIFY PCB BEFORE REPAIR'
+
+TANTTL byte 25
+       text 'Tanam External Board Test'
+TANNO  byte 28
+       text 'Optional board not connected'
+TANSKIP byte 26
+       text 'Safely skipped - no writes'
+TANYES byte 26
+       text 'Detected: 2 independent 8K'
+TANWARN byte 26
+       text 'WARNING: erases all 16 KiB'
+TANW2  byte 27
+       text 'Both windows will be erased'
+TANCONF byte 27
+       text '1  One complete 16 KiB pass'
+TANCONT byte 21
+       text '2  Continuous until 0'
+TANRNG byte 21
+       text 'Running Tanam March-B'
+TANSTOP byte 27
+       text '0 stops after current block'
+TANWIN byte 12
+       text 'Window base>'
+TANRTT byte 21
+       text 'Tanam RAM Test Result'
+TANR1  byte 19
+       text 'March-B 17N result:'
+TANADT byte 18
+       text 'First RAM address>'
+TANMST byte 14
+       text 'RAM data mask>'
+TANRDON byte 17
+       text 'All 16 KiB tested'
+
+MUSTTL byte 16
+       text 'Wave + PSG Music'
+MUSL1  byte 25
+       text 'MegaDemo high-energy loop'
+MUSL2  byte 20
+       text 'Music: Rasmus/ASMUSR'
+MUSL3  byte 21
+       text 'APPROVED FOR DIAG USE'
+MUSL4  byte 25
+       text '0 stops and mutes at once'
+
+VDPDTL byte 21
+       text 'TMS9918A Pattern Test'
+VDPDL1 byte 28
+       text 'Moving + overlapping sprites'
+VDPDL2 byte 29
+       text 'Text, Multicolor, Raster wave'
+VDPDL3 byte 27
+       text 'Watch for flicker or lockup'
+VDPRTL byte 24
+       text 'TMS9918A Pattern Results'
+VDPRL1 byte 15
+       text 'Sprite overlap:'
+VDPRL2 byte 18
+       text 'Five-sprite limit:'
+VDPRL3 byte 27
+       text 'Pattern animation completed'
+VDPRL4 byte 22
+       text 'Stable pictures = PASS'
+VDPRL5 byte 24
+       text 'Corrupt or frozen = FAIL'
+SEENTX byte 4
+       text 'SEEN'
+NOTSEE byte 8
+       text 'NOT SEEN'
+VDMT1  byte 29
+       text 'Hexbus Tutor/Pyuuta text mode'
+VDMT2  byte 37
+       text 'lowercase: abcdefghijklmnopqrstuvwxyz'
+VDMT3  byte 26
+       text '40-column character timing'
+VDMT4  byte 23
+       text 'dark blue text on white'
+
+SYSRTT byte 18
+       text 'System Information'
+VERST  byte 27
+       text 'Diagnostic BIOS v1.0 - 2026'
+LASTTX byte 5
+       text 'LAST:'
+NOKEYT byte 4
+       text 'NONE'
+HASHTX byte 1
+       text '#'
+REGIONT byte 7
+       text 'REGION:'
+VIEWTX byte 5
+       text 'VIEW:'
+PCVIEW byte 10
+       text 'PC KEYCAPS'
+TUTORT byte 8
+       text 'US TUTOR'
+PYUUTT byte 9
+       text 'JP PYUUTA'
+CPUTX  byte 9
+       text 'CPU CORE:'
+RAMTX  byte 12
+       text 'ON-CHIP RAM:'
+ROMSUT byte 10
+       text 'DIAG SUMS>'
+SLASHT byte 1
+       text '/'
+ROMTX  byte 15
+       text 'DIAG ROM CHECK:'
+VDPTX  byte 9
+       text 'VDP/VRAM:'
+PASSTX byte 4
+       text 'PASS'
+FAILTX byte 4
+       text 'FAIL'
+VADRTX byte 15
+       text 'FIRST VRAM ADR>'
+VMASKT byte 15
+       text 'VRAM LANE MASK>'
+TIMETX byte 10
+       text 'VDP FRAME:'
+MAP0TX byte 16
+       text 'MAP >0000->3FFF:'
+DIAGMP byte 8
+       text 'DIAG ROM'
+MAPXTX byte 16
+       text 'MAP >6000+>C000:'
+NORWTX byte 5
+       text 'NO RW'
+RWRWTX byte 7
+       text '2X8K RW'
+EXTTXT byte 5
+       text 'EXT: '
+NOEXTT byte 13
+       text 'NOT CONNECTED'
+TANAMT byte 16
+       text 'TANAM 2X8K INDEP'
+KEY0T  byte 11
+       text 'R0>     R1>'
+KEY1T  byte 11
+       text 'R2>     R3>'
+KEY2T  byte 11
+       text 'R4>     R5>'
+KEY3T  byte 11
+       text 'R6>     R7>'
+FOOTTX byte 26
+       text 'Hold 0 one second for menu'
+HEXDIG text '0123456789ABCDEF'
+       even
+
+* Fixed 16-byte decoded contact labels: eight display columns for the key or
+* controller function, four for row/bit, then padding.  The row/bit remains
+* authoritative on custom PC-mapped keyboards whose legends were changed.
+KEYNAM
+       text '1       R0B0    '
+       text '2       R0B1    '
+       text 'Q       R0B2    '
+       text 'W       R0B3    '
+       text 'A       R0B4    '
+       text 'S       R0B5    '
+       text 'Z       R0B6    '
+       text 'X       R0B7    '
+       text '3       R1B0    '
+       text '4       R1B1    '
+       text 'E       R1B2    '
+       text 'R       R1B3    '
+       text 'D       R1B4    '
+       text 'F       R1B5    '
+       text 'C       R1B6    '
+       text 'V       R1B7    '
+       text '5       R2B0    '
+       text '6       R2B1    '
+       text 'T       R2B2    '
+       text 'Y       R2B3    '
+       text 'G       R2B4    '
+       text 'H       R2B5    '
+       text 'B       R2B6    '
+       text 'N       R2B7    '
+       text '7       R3B0    '
+       text '8       R3B1    '
+       text '9       R3B2    '
+       text 'U       R3B3    '
+       text 'I       R3B4    '
+       text 'J       R3B5    '
+       text 'K       R3B6    '
+       text 'M       R3B7    '
+       text '0       R4B0    '
+       text '-       R4B1    '
+       text 'O       R4B2    '
+       text 'P       R4B3    '
+       text 'L       R4B4    '
+       text ';       R4B5    '
+       text ',       R4B6    '
+       text '.       R4B7    '
+       text 'UNUSED  R5B0    '
+       text 'UNUSED  R5B1    '
+       text 'DEG/YEN R5B2    '
+       text 'UNDERSCRR5B3    '
+       text ':       R5B4    '
+       text '[       R5B5    '
+       text '/       R5B6    '
+       text ']       R5B7    '
+       text 'UNUSED  R6B0    '
+       text 'CAPS    R6B1    '
+       text 'SHIFT   R6B2    '
+       text 'MON     R6B3    '
+       text 'ENTER   R6B4    '
+       text 'UNUSED  R6B5    '
+       text 'MOD     R6B6    '
+       text 'SPACE   R6B7    '
+       text 'LEFT    R7B0    '
+       text 'UP      R7B1    '
+       text 'DOWN    R7B2    '
+       text 'RIGHT   R7B3    '
+       text 'UNUSED  R7B4    '
+       text 'UNUSED  R7B5    '
+       text 'UNUSED  R7B6    '
+       text 'UNUSED  R7B7    '
+
+* Eight-byte display-name override when the native Shift contact is active.
+* The Pyuuta keycaps draw the shifted '-' and Yen symbols as a small circle
+* and grave-like mark; the firmware bytes are ASCII '|' and '^' respectively.
+KEYSHF
+       text 'EXCLAM  '
+       text 'DQUOTE  '
+       text 'Q       '
+       text 'W       '
+       text 'A       '
+       text 'S       '
+       text 'Z       '
+       text 'X       '
+       text 'HASH    '
+       text 'DOLLAR  '
+       text 'E       '
+       text 'R       '
+       text 'D       '
+       text 'F       '
+       text 'C       '
+       text 'V       '
+       text 'PERCENT '
+       text 'AMPERS  '
+       text 'T       '
+       text 'Y       '
+       text 'G       '
+       text 'H       '
+       text 'B       '
+       text 'N       '
+       text 'APOST   '
+       text 'LPAREN  '
+       text 'RPAREN  '
+       text 'U       '
+       text 'I       '
+       text 'J       '
+       text 'K       '
+       text 'M       '
+       text 'EQUALS  '
+       text 'BAR/DEG '
+       text 'O       '
+       text 'P       '
+       text 'L       '
+       text 'PLUS    '
+       text 'LESS    '
+       text 'GREATER '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       text 'GRAVE/^ '
+       text 'AT      '
+       text 'STAR    '
+       text 'LBRACE  '
+       text 'QUESTION'
+       text 'RBRACE  '
+       text 'UNUSED  '
+       text 'CAPS    '
+       text 'SHIFT   '
+       text 'MON     '
+       text 'ENTER   '
+       text 'UNUSED  '
+       text 'MOD     '
+       text 'SPACE   '
+       text 'LEFT    '
+       text 'UP      '
+       text 'DOWN    '
+       text 'RIGHT   '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       text 'UNUSED  '
+
+* First-eight-character labels printed on the photographed replacement's PC
+* keycaps. These describe the cap being pressed, not a firmware remapping.
+PCNAM
+       text '1       '
+       text '2       '
+       text 'Q       '
+       text 'W       '
+       text 'A       '
+       text 'S       '
+       text 'Z       '
+       text 'X       '
+       text '3       '
+       text '4       '
+       text 'E       '
+       text 'R       '
+       text 'D       '
+       text 'F       '
+       text 'C       '
+       text 'V       '
+       text '5       '
+       text '6       '
+       text 'T       '
+       text 'Y       '
+       text 'G       '
+       text 'H       '
+       text 'B       '
+       text 'N       '
+       text '7       '
+       text '8       '
+       text '9       '
+       text 'U       '
+       text 'I       '
+       text 'J       '
+       text 'K       '
+       text 'M       '
+       text '0       '
+       text 'HYPHEN  '
+       text 'O       '
+       text 'P       '
+       text 'L       '
+       text 'SEMICOL '
+       text 'COMMA   '
+       text 'PERIOD  '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       text 'EQUALS  '
+       text 'BLANK   '
+       text 'QUOTE   '
+       text 'LBRACK  '
+       text 'SLASH   '
+       text 'RBRACK  '
+       text 'UNUSED  '
+       text 'CAPS    '
+       text 'SHIFT   '
+       text 'MON     '
+       text 'ENTER   '
+       text 'UNUSED  '
+       text 'MOD     '
+       text 'SPACE   '
+       text 'LEFT    '
+       text 'UP      '
+       text 'DOWN    '
+       text 'RIGHT   '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       text 'UNUSED  '
+
+PCSHF
+       text 'EXCLAM  '
+       text 'AT      '
+       text 'Q       '
+       text 'W       '
+       text 'A       '
+       text 'S       '
+       text 'Z       '
+       text 'X       '
+       text 'HASH    '
+       text 'DOLLAR  '
+       text 'E       '
+       text 'R       '
+       text 'D       '
+       text 'F       '
+       text 'C       '
+       text 'V       '
+       text 'PERCENT '
+       text 'CARET   '
+       text 'T       '
+       text 'Y       '
+       text 'G       '
+       text 'H       '
+       text 'B       '
+       text 'N       '
+       text 'AMPERS  '
+       text 'STAR    '
+       text 'LPAREN  '
+       text 'U       '
+       text 'I       '
+       text 'J       '
+       text 'K       '
+       text 'M       '
+       text 'RPAREN  '
+       text 'UNDER   '
+       text 'O       '
+       text 'P       '
+       text 'L       '
+       text 'COLON   '
+       text 'LESS    '
+       text 'GREATER '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       text 'PLUS    '
+       text 'BLANK   '
+       text 'DQUOTE  '
+       text 'LBRACE  '
+       text 'QUESTION'
+       text 'RBRACE  '
+       text 'UNUSED  '
+       text 'CAPS    '
+       text 'SHIFT   '
+       text 'MON     '
+       text 'ENTER   '
+       text 'UNUSED  '
+       text 'MOD     '
+       text 'SPACE   '
+       text 'LEFT    '
+       text 'UP      '
+       text 'DOWN    '
+       text 'RIGHT   '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       text 'UNUSED  '
+       even
+
+* Four 8x8 sprite patterns and two sprite attribute records.
+SPRITE byte >18,>3c,>7e,>ff,>ff,>7e,>3c,>18
+       byte >81,>42,>24,>18,>18,>24,>42,>81
+       byte >ff,>81,>bd,>a5,>a5,>bd,>81,>ff
+       byte >00,>66,>ff,>ff,>7e,>3c,>18,>00
+
+* Showcase tile field and five-sprite status exercise. These are original
+* diagnostic graphics, not extracted from another demo.
+DEMOPAT
+       byte >18,>3c,>7e,>db,>ff,>7e,>24,>18
+       byte >81,>42,>24,>18,>18,>24,>42,>81
+       byte >aa,>55,>aa,>55,>aa,>55,>aa,>55
+       byte >00,>18,>3c,>7e,>3c,>18,>00,>00
+       byte >88,>44,>22,>11,>22,>44,>88,>00
+       byte >10,>38,>7c,>fe,>7c,>38,>10,>00
+       byte >c3,>66,>3c,>18,>3c,>66,>c3,>00
+       byte >00,>24,>5a,>a5,>a5,>5a,>24,>00
+DEMOFR
+       byte >18,>3c,>7e,>db,>ff,>7e,>24,>18
+       byte >0c,>1e,>3f,>6d,>ff,>3f,>12,>0c
+       byte >06,>0f,>9f,>b6,>ff,>9f,>09,>06
+       byte >03,>87,>cf,>db,>ff,>cf,>84,>03
+       byte >81,>c3,>e7,>db,>ff,>e7,>42,>81
+       byte >c0,>e1,>f3,>db,>ff,>f3,>21,>c0
+       byte >60,>f0,>f9,>6d,>ff,>f9,>90,>60
+       byte >30,>78,>fc,>b6,>ff,>fc,>48,>30
+DEMOAT byte 79,40,0,15,79,40,0,8
+       byte 79,160,0,5,79,200,0,7
+       byte 79,240,0,10,>d0
+
+* Private UI glyphs >10..>15. The two-pixel rails join across character-cell
+* boundaries. Square two-row joints avoid the former rounded-corner shelf.
+FRAMEG
+* >10 square top-left, >11 square top-right
+       byte >00,>00,>00,>1f,>1f,>18,>18,>18
+       byte >00,>00,>00,>f8,>f8,>18,>18,>18
+* >12 square bottom-left, >13 square bottom-right
+       byte >18,>18,>18,>1f,>1f,>00,>00,>00
+       byte >18,>18,>18,>f8,>f8,>00,>00,>00
+* >14 horizontal and >15 vertical joined rails
+       byte >00,>00,>00,>ff,>ff,>00,>00,>00
+       byte >18,>18,>18,>18,>18,>18,>18,>18
+
+* Bold 1..8 in private character slots >16..>1D. These codes are written only
+* over the selected menu numeral, so version/date digits elsewhere stay normal.
+ACKGLY
+       byte >30,>70,>30,>30,>30,>30,>78,>00
+       byte >78,>cc,>0c,>18,>30,>60,>fc,>00
+       byte >f8,>0c,>0c,>78,>0c,>0c,>f8,>00
+       byte >18,>38,>78,>d8,>fc,>18,>18,>00
+       byte >fc,>c0,>c0,>f8,>0c,>0c,>f8,>00
+       byte >78,>c0,>c0,>f8,>cc,>cc,>78,>00
+       byte >fc,>0c,>18,>30,>60,>60,>60,>00
+       byte >78,>cc,>cc,>78,>cc,>cc,>78,>00
+
+* Independently encoded 5x7 uppercase diagnostic font, ASCII 32..95.
+FONT
+* 32-47: space through slash
+       byte >00,>00,>00,>00,>00,>00,>00,>00
+       byte >20,>20,>20,>20,>20,>00,>20,>00
+       byte >50,>50,>50,>00,>00,>00,>00,>00
+       byte >50,>f8,>50,>50,>f8,>50,>00,>00
+       byte >20,>78,>a0,>70,>28,>f0,>20,>00
+       byte >c8,>d0,>20,>40,>98,>18,>00,>00
+       byte >60,>90,>a0,>40,>a8,>90,>68,>00
+       byte >20,>20,>40,>00,>00,>00,>00,>00
+       byte >10,>20,>40,>40,>40,>20,>10,>00
+       byte >40,>20,>10,>10,>10,>20,>40,>00
+       byte >00,>a8,>70,>f8,>70,>a8,>00,>00
+       byte >00,>20,>20,>f8,>20,>20,>00,>00
+       byte >00,>00,>00,>00,>00,>20,>20,>40
+       byte >00,>00,>00,>f8,>00,>00,>00,>00
+       byte >00,>00,>00,>00,>00,>00,>20,>00
+       byte >08,>10,>20,>40,>80,>00,>00,>00
+* 48-63: zero through question mark
+       byte >70,>88,>98,>a8,>c8,>88,>70,>00
+       byte >20,>60,>20,>20,>20,>20,>70,>00
+       byte >70,>88,>08,>10,>20,>40,>f8,>00
+       byte >f0,>08,>08,>70,>08,>08,>f0,>00
+       byte >10,>30,>50,>90,>f8,>10,>10,>00
+       byte >f8,>80,>80,>f0,>08,>08,>f0,>00
+       byte >70,>80,>80,>f0,>88,>88,>70,>00
+       byte >f8,>08,>10,>20,>40,>40,>40,>00
+       byte >70,>88,>88,>70,>88,>88,>70,>00
+       byte >70,>88,>88,>78,>08,>08,>70,>00
+       byte >00,>20,>00,>00,>20,>00,>00,>00
+       byte >00,>20,>00,>00,>20,>20,>40,>00
+       byte >10,>20,>40,>80,>40,>20,>10,>00
+       byte >00,>00,>f8,>00,>f8,>00,>00,>00
+       byte >40,>20,>10,>08,>10,>20,>40,>00
+       byte >70,>88,>08,>10,>20,>00,>20,>00
+* 64-79: at through O
+       byte >70,>88,>b8,>a8,>b8,>80,>70,>00
+       byte >70,>88,>88,>f8,>88,>88,>88,>00
+       byte >f0,>88,>88,>f0,>88,>88,>f0,>00
+       byte >70,>88,>80,>80,>80,>88,>70,>00
+       byte >f0,>88,>88,>88,>88,>88,>f0,>00
+       byte >f8,>80,>80,>f0,>80,>80,>f8,>00
+       byte >f8,>80,>80,>f0,>80,>80,>80,>00
+       byte >70,>88,>80,>b8,>88,>88,>70,>00
+       byte >88,>88,>88,>f8,>88,>88,>88,>00
+       byte >70,>20,>20,>20,>20,>20,>70,>00
+       byte >38,>10,>10,>10,>90,>90,>60,>00
+       byte >88,>90,>a0,>c0,>a0,>90,>88,>00
+       byte >80,>80,>80,>80,>80,>80,>f8,>00
+       byte >88,>d8,>a8,>a8,>88,>88,>88,>00
+       byte >88,>c8,>a8,>98,>88,>88,>88,>00
+       byte >70,>88,>88,>88,>88,>88,>70,>00
+* 80-95: P through underscore
+       byte >f0,>88,>88,>f0,>80,>80,>80,>00
+       byte >70,>88,>88,>88,>a8,>90,>68,>00
+       byte >f0,>88,>88,>f0,>a0,>90,>88,>00
+       byte >78,>80,>80,>70,>08,>08,>f0,>00
+       byte >f8,>20,>20,>20,>20,>20,>20,>00
+       byte >88,>88,>88,>88,>88,>88,>70,>00
+       byte >88,>88,>88,>88,>88,>50,>20,>00
+       byte >88,>88,>88,>a8,>a8,>d8,>88,>00
+       byte >88,>88,>50,>20,>50,>88,>88,>00
+       byte >88,>88,>50,>20,>20,>20,>20,>00
+       byte >f8,>08,>10,>20,>40,>80,>f8,>00
+       byte >70,>40,>40,>40,>40,>40,>70,>00
+       byte >80,>40,>20,>10,>08,>00,>00,>00
+       byte >70,>10,>10,>10,>10,>10,>70,>00
+       byte >20,>50,>88,>00,>00,>00,>00,>00
+       byte >00,>00,>00,>00,>00,>00,>f8,>00
+
+* 96-127: backtick, true lowercase a-z, braces, bar, tilde, diagnostic block.
+       byte >20,>10,>00,>00,>00,>00,>00,>00
+       byte >00,>00,>70,>08,>78,>88,>78,>00
+       byte >80,>80,>b0,>c8,>88,>88,>f0,>00
+       byte >00,>00,>70,>88,>80,>88,>70,>00
+       byte >08,>08,>68,>98,>88,>88,>78,>00
+       byte >00,>00,>70,>88,>f8,>80,>70,>00
+       byte >30,>48,>40,>e0,>40,>40,>40,>00
+       byte >00,>00,>78,>88,>78,>08,>70,>00
+       byte >80,>80,>b0,>c8,>88,>88,>88,>00
+       byte >20,>00,>60,>20,>20,>20,>70,>00
+       byte >10,>00,>30,>10,>10,>90,>60,>00
+       byte >80,>80,>90,>a0,>c0,>a0,>90,>00
+       byte >60,>20,>20,>20,>20,>20,>70,>00
+       byte >00,>00,>d0,>a8,>a8,>a8,>a8,>00
+       byte >00,>00,>b0,>c8,>88,>88,>88,>00
+       byte >00,>00,>70,>88,>88,>88,>70,>00
+       byte >00,>00,>f0,>88,>f0,>80,>80,>00
+       byte >00,>00,>78,>88,>78,>08,>08,>00
+       byte >00,>00,>b0,>c8,>80,>80,>80,>00
+       byte >00,>00,>78,>80,>70,>08,>f0,>00
+       byte >40,>40,>e0,>40,>40,>48,>30,>00
+       byte >00,>00,>88,>88,>88,>98,>68,>00
+       byte >00,>00,>88,>88,>88,>50,>20,>00
+       byte >00,>00,>88,>a8,>a8,>a8,>50,>00
+       byte >00,>00,>88,>50,>20,>50,>88,>00
+       byte >00,>00,>88,>88,>78,>08,>70,>00
+       byte >00,>00,>f8,>10,>20,>40,>f8,>00
+       byte >18,>20,>20,>40,>20,>20,>18,>00
+       byte >20,>20,>20,>20,>20,>20,>20,>00
+       byte >c0,>20,>20,>10,>20,>20,>c0,>00
+       byte >00,>68,>90,>00,>00,>00,>00,>00
+       byte >aa,>55,>aa,>55,>aa,>55,>aa,>55
+
+* Patched by build.ps1 so the 16-bit word sum over the complete image is zero.
+       aorg >3ffc
+ROMCS  data >0000
+       data >d1a6                 * fixed diagnostic build marker
+       end

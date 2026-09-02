@@ -1,0 +1,4 @@
+* SPDX-License-Identifier: Apache-2.0
+* American Tomy Tutor presentation wrapper.
+REGION equ  >0000
+       copy "diag.a99"

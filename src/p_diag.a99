@@ -1,0 +1,4 @@
+* SPDX-License-Identifier: Apache-2.0
+* Japanese Tomy Pyuuta presentation wrapper.
+REGION equ  >0001
+       copy "diag.a99"

@@ -1,0 +1,29 @@
+{
+  "schema": "tomy-diagnostic-rom-build-v1",
+  "version": "1.0",
+  "build_date_label": "2026",
+  "builds": [
+    {
+      "region": "tutor",
+      "core": "tutor-diag-16k.bin",
+      "core_bytes": 16384,
+      "core_sha256": "e569b4bb6e7cde30588a1e92de590fd185693f886a0b844867fdfadf028bc718",
+      "runtime_word_sum": ">0000",
+      "w27c512": "tutor-diag-w27c512.bin",
+      "w27c512_bytes": 65536,
+      "w27c512_sha256": "7f805ca1ddada9438fa593a94fec3fe2422eb10f8b065315802cdb81e3509a0d",
+      "layout": "four identical 16 KiB quarters at >0000, >4000, >8000, >C000"
+    },
+    {
+      "region": "pyuuta",
+      "core": "pyuuta-diag-16k.bin",
+      "core_bytes": 16384,
+      "core_sha256": "30f2bc205af50549d8e4eb0d800946ff4266232729362af970757a9fda54def2",
+      "runtime_word_sum": ">0000",
+      "w27c512": "pyuuta-diag-w27c512.bin",
+      "w27c512_bytes": 65536,
+      "w27c512_sha256": "9559e7aeda5bbb2b92629411d725053342a5b812c067a94084da56b5da0a4f64",
+      "layout": "four identical 16 KiB quarters at >0000, >4000, >8000, >C000"
+    }
+  ]
+}
