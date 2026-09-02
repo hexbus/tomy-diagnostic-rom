@@ -75,7 +75,7 @@ If menu item 6 identifies a VRAM lane, use the board-qualified [VRAM chip/lane l
 - In menu item 3, run one strict full-array March-B pass and then continuous mode. The VRAM data intentionally owns the display during the five whole-array elements; phase border colors remain observable. Require PASS after one pass, then confirm `0` stops continuous mode at a 256-byte boundary and produces a stable `STOPPED` result page.
 - With detected Tanam memory, run both the one-pass and continuous all-16-KiB tests only after accepting the destructive warning. Confirm `0` stops continuous mode at a block boundary.
 - Run menu item 4 and observe Graphics I, 40-column Text with lowercase, Multicolor, streamed patterns, sprite collision/overflow, 8x8, 16x16, magnified sprites, and the final Graphics-I raster wave. It must leave the raster wave automatically and reach the showcase result page; repeat while holding `0` during a timed phase and confirm it exits cleanly rather than locking.
-- Open menu item 8 and verify the Credits and Thanks page names Jon G. (hexbus), Jim F. (Ksarul), Takeo N. (Tanam1972), Rasmus M. (Rasmus), Mike B (Tursi), the MegaDemo team, and the AtariAge TI-99 Forum.
+- Open menu item 8 and verify the Credits and Thanks page names Jon G. (hexbus), Jim F. (Ksarul), Takeo N. (Tanam1972), Rasmus M. (Rasmus), Mike B (Tursi), Alan (Old CS1), the MegaDemo team, and the AtariAge TI-99 Forum.
 - Run five cold boots.
 - Run for 60 minutes while watching for changing borders, corruption, intermittent sound, or stuck input bits.
 

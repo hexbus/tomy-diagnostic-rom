@@ -605,7 +605,8 @@ if (inputMode === 'tanam-continuous-stop' && (!screen.includes('STOPPED') || wor
 if (inputMode === 'credits' && (!screen.includes('Credits and Thanks') ||
     !screen.includes('Jon G. (hexbus)') || !screen.includes('Jim F. (Ksarul)') ||
     !screen.includes('Takeo N. (Tanam1972)') || !screen.includes('Rasmus M. (Rasmus)') ||
-    !screen.includes('Mike B (Tursi)') || !screen.includes('MegaDemo team') ||
+    !screen.includes('Mike B (Tursi)') || !screen.includes('Alan (Old CS1)') ||
+    !screen.includes('MegaDemo team') ||
     !screen.includes('AtariAge TI-99 Forum'))) {
   errors.push('credits page is incomplete');
 }

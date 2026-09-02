@@ -257,7 +257,7 @@ CREDPG mov  r11,r12
        li   r1,CREDTT
        bl   @PUTTTL
        li   r4,CREDTB
-       li   r5,7
+       li   r5,8
 CREDLP mov  *r4+,r0
        mov  *r4+,r1
        bl   @PUTSTR
@@ -3037,6 +3037,8 @@ CREDRM byte 18
        text 'Rasmus M. (Rasmus)'
 CREDMB byte 14
        text 'Mike B (Tursi)'
+CREDAL byte 14
+       text 'Alan (Old CS1)'
 CREDMD byte 13
        text 'MegaDemo team'
 CREDAA byte 20
@@ -3046,8 +3048,9 @@ CREDTB data >00a8,CREDJ
        data >0126,CREDTN
        data >0167,CREDRM
        data >01a9,CREDMB
-       data >01e9,CREDMD
-       data >0226,CREDAA
+       data >01e9,CREDAL
+       data >0229,CREDMD
+       data >0266,CREDAA
 
 INPTTL byte 25
        text 'Test Keyboard / Joysticks'

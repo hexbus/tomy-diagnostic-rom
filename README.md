@@ -36,7 +36,7 @@ The `Hexbus Tutor/Pyuuta` menu displays `github.com/hexbus`, `RELEASE v1.0 - USE
 5. A 29.897-second combined Wave + PSG Music Test using the approved MegaDemo raster technique and high-energy captured writes; `0` stops and mutes it.
 6. Identify Bad VRAM IC using a board-qualified, boxed 2x4 package drawing. Each package distinguishes its PCB identifier (`IC:D1`) from its software data lane (`D0`), and a star marks the suspected package.
 7. Optional destructive Tanam External Board Test covering both independent 8 KiB windows.
-8. Credits and Thanks for the people and AtariAge community who contributed knowledge, testing, and prior work.
+8. Credits and Thanks for Jon G. (hexbus), Jim F. (Ksarul), Takeo N. (Tanam1972), Rasmus M. (Rasmus), Mike B (Tursi), Alan (Old CS1), the MegaDemo team, and the AtariAge TI-99 Forum.
 
 The first physical keyboard report is unusually diagnostic: `Q`, `E`, `T`, `9`, `O`, the PC-keycap `=`/`+` position over the native degree/Yen contact, Shift, and Down are respectively `R0B2` through `R7B2`. A complete one-contact-per-row failure on bit 2 points toward their shared matrix/input path rather than eight coincidentally worn switches. The replacement PCB confirms that its two Shift switches intentionally share R6B2 and that its PC legends do not electronically remap the native contacts. See the [keyboard matrix notes](docs/KEYBOARD-CONTROLLER-MATRIX.md).
 
